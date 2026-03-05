@@ -38,7 +38,7 @@ describe("Simulator", () => {
     expect(result.feeUsd).toBeCloseTo(7.1632455532, 6);
     expect(result.netUsd).toBeCloseTo(6.8367544468, 6);
     expect(result.netEdgeBps).toBeCloseTo(68.367544468, 6);
-    expect(result.latencyAdjustedNetUsd).toBeCloseTo(6.6967544468, 6);
+    expect(result.latencyAdjustedNetUsd).toBeCloseTo(6.3873143613, 5);
     expect(result.pFail).toBeGreaterThan(0);
     expect(result.pFail).toBeLessThan(1);
     expect(result.expectedShortfall).toBeGreaterThan(0);

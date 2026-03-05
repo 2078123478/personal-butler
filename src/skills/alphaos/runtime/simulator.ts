@@ -23,6 +23,26 @@ export class Simulator {
   constructor(private readonly options: SimulatorOptions) {}
 
   estimate(plan: ExecutionPlan, mode: ExecutionMode, risk: RiskPolicy): SimulationResult {
+    const hasValidPrices =
+      Number.isFinite(plan.buyPrice) &&
+      Number.isFinite(plan.sellPrice) &&
+      plan.buyPrice > 0 &&
+      plan.sellPrice > 0;
+    if (!hasValidPrices) {
+      const notional = Math.max(0, plan.notionalUsd);
+      return {
+        grossUsd: 0,
+        feeUsd: 0,
+        netUsd: -notional,
+        netEdgeBps: -Infinity,
+        pFail: 0.95,
+        expectedShortfall: notional,
+        latencyAdjustedNetUsd: -notional,
+        pass: false,
+        reason: "invalid execution price: buy/sell must be > 0",
+      };
+    }
+
     const metadata = plan.metadata ?? {};
     const grossEdgeBps =
       plan.buyPrice > 0 ? ((plan.sellPrice - plan.buyPrice) / plan.buyPrice) * 10_000 : 0;
@@ -49,17 +69,20 @@ export class Simulator {
     const feeUsd = breakdown.totalCostUsd;
     const netUsd = grossUsd - feeUsd;
     const latencyPenaltyUsd = plan.notionalUsd * breakdown.latencyPenaltyBps / 10_000;
-    const latencyAdjustedNetUsd = netUsd - latencyPenaltyUsd;
+    const latencyAdjustedGrossNetUsd = netUsd - latencyPenaltyUsd;
     const netEdgeBps = plan.notionalUsd > 0 ? (netUsd / plan.notionalUsd) * 10_000 : -Infinity;
-    const latencyAdjustedNetEdgeBps =
-      plan.notionalUsd > 0 ? (latencyAdjustedNetUsd / plan.notionalUsd) * 10_000 : -Infinity;
-    const pFail = estimateFailureProbability(avgLatencyMs, latencyAdjustedNetEdgeBps, volatility);
+    const latencyAdjustedGrossNetEdgeBps =
+      plan.notionalUsd > 0 ? (latencyAdjustedGrossNetUsd / plan.notionalUsd) * 10_000 : -Infinity;
+    const pFail = estimateFailureProbability(avgLatencyMs, latencyAdjustedGrossNetEdgeBps, volatility);
     const expectedShortfall = estimateExpectedShortfall(
       plan.notionalUsd,
       pFail,
       feeUsd,
-      latencyAdjustedNetEdgeBps,
+      latencyAdjustedGrossNetEdgeBps,
     );
+    const latencyAdjustedNetUsd = latencyAdjustedGrossNetUsd - expectedShortfall;
+    const latencyAdjustedNetEdgeBps =
+      plan.notionalUsd > 0 ? (latencyAdjustedNetUsd / plan.notionalUsd) * 10_000 : -Infinity;
     const min = mode === "live" ? risk.minNetEdgeBpsLive : risk.minNetEdgeBpsPaper;
     const pass = latencyAdjustedNetEdgeBps >= min;
     return {
@@ -72,8 +95,8 @@ export class Simulator {
       latencyAdjustedNetUsd,
       pass,
       reason: pass
-        ? `latency-adjusted net edge ${latencyAdjustedNetEdgeBps.toFixed(2)}bps passed`
-        : `latency-adjusted net edge ${latencyAdjustedNetEdgeBps.toFixed(2)}bps below ${min}bps`,
+        ? `risk-adjusted net edge ${latencyAdjustedNetEdgeBps.toFixed(2)}bps passed`
+        : `risk-adjusted net edge ${latencyAdjustedNetEdgeBps.toFixed(2)}bps below ${min}bps`,
     };
   }
 }
