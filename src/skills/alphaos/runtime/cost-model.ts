@@ -15,6 +15,7 @@ export interface CostModelBreakdown {
   slippagePerLegBps: number;
   slippageBps: number;
   latencyPenaltyBps: number;
+  latencyPenaltyUsd: number;
   mevPenaltyBps: number;
   netEdgeBps: number;
   tradeFeeBuyUsd: number;
@@ -56,6 +57,7 @@ export function calculateCostBreakdown(input: CostModelInput): CostModelBreakdow
   const tradeFeeSellUsd = safeNotional * Math.max(0, input.takerFeeBps) / 10_000;
   const slippageBuyUsd = safeNotional * slippagePerLegBps / 10_000;
   const slippageSellUsd = safeNotional * slippagePerLegBps / 10_000;
+  const latencyPenaltyUsd = safeNotional * latencyPenaltyBps / 10_000;
   const mevUsd = safeNotional * mevPenaltyBps / 10_000;
   const totalCostUsd =
     Math.max(0, input.gasBuyUsd) +
@@ -64,12 +66,14 @@ export function calculateCostBreakdown(input: CostModelInput): CostModelBreakdow
     tradeFeeSellUsd +
     slippageBuyUsd +
     slippageSellUsd +
+    latencyPenaltyUsd +
     mevUsd;
   return {
     feeBps,
     slippagePerLegBps,
     slippageBps,
     latencyPenaltyBps,
+    latencyPenaltyUsd,
     mevPenaltyBps,
     netEdgeBps,
     tradeFeeBuyUsd,
