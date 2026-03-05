@@ -60,6 +60,8 @@ interface TradeExecutor {
     netUsd: number;
     error?: string;
     errorType?: "permission_denied" | "whitelist_restricted" | "network" | "validation" | "unknown";
+    latencyMs?: number;
+    slippageDeviationBps?: number;
   }>;
 }
 
@@ -118,6 +120,8 @@ export class AlphaEngine {
   ) {
     this.mode = options.startMode;
     this.desiredMode = options.liveEnabled ? "live" : options.startMode;
+    this.store.ensureBalanceBaseline("paper", options.paperStartingBalanceUsd);
+    this.store.ensureBalanceBaseline("live", options.liveBalanceUsd);
   }
 
   static withDefaultExecutor(
@@ -269,7 +273,7 @@ export class AlphaEngine {
       return;
     }
 
-    const balance = this.mode === "live" ? this.options.liveBalanceUsd : this.options.paperStartingBalanceUsd;
+    const balance = this.store.getCurrentBalance(this.mode);
     const profile = this.store.getStrategyProfile(plugin.id);
     const rawPlan = await plugin.plan(evalResult, {
       balanceUsd: balance,
@@ -343,6 +347,14 @@ export class AlphaEngine {
 
     const effectiveMode = this.mode === "live" && this.evaluateLiveGate().passed ? "live" : "paper";
     const trade = await this.executor.execute(effectiveMode, plan, simulation);
+    const slippageDeviationBps =
+      trade.success && plan.notionalUsd > 0
+        ? Math.abs(simulation.netUsd - trade.netUsd) / plan.notionalUsd * 10_000
+        : undefined;
+    const tradeForStore = {
+      ...trade,
+      slippageDeviationBps: trade.slippageDeviationBps ?? slippageDeviationBps,
+    };
 
     if (
       effectiveMode === "live" &&
@@ -377,7 +389,7 @@ export class AlphaEngine {
       return;
     }
 
-    this.store.insertTrade(opportunity.id, effectiveMode, trade, new Date().toISOString());
+    this.store.insertTrade(opportunity.id, effectiveMode, tradeForStore, new Date().toISOString());
 
     if (trade.success) {
       this.consecutiveFailures = 0;
@@ -408,8 +420,17 @@ export class AlphaEngine {
     });
 
     const dailyNet = this.store.getTodayNetUsd(effectiveMode);
-    const balanceNow = effectiveMode === "live" ? this.options.liveBalanceUsd : this.options.paperStartingBalanceUsd;
-    const breakDecision = this.riskEngine.shouldCircuitBreak(this.consecutiveFailures, dailyNet, balanceNow);
+    const balanceNow = this.store.getCurrentBalance(effectiveMode);
+    const quality = this.store.getExecutionQualityStats(24);
+    const breakDecision = this.riskEngine.shouldCircuitBreak({
+      consecutiveFailures: this.consecutiveFailures,
+      dailyNetUsd: dailyNet,
+      balanceUsd: balanceNow,
+      permissionFailures24h: quality.permissionFailures,
+      rejectRate24h: quality.rejectRate,
+      avgLatencyMs24h: quality.avgLatencyMs,
+      avgSlippageDeviationBps24h: quality.avgSlippageDeviationBps,
+    });
     if (breakDecision.breakNow) {
       this.mode = "paper";
       this.circuitBreakerUntil = Date.now() + 5 * 60 * 1000;
@@ -426,10 +447,15 @@ export class AlphaEngine {
 
   private evaluateLiveGate(): { passed: boolean; reasons: string[] } {
     const simulationStats = this.store.getSimulationStats(24);
+    const quality = this.store.getExecutionQualityStats(24);
     const gateInput: GateCheck = {
       simulationNetUsd24h: simulationStats.netUsd,
       simulationWinRate24h: simulationStats.winRate,
       consecutiveFailures: Math.max(this.consecutiveFailures, this.store.getRecentConsecutiveFailures(3)),
+      permissionFailures24h: quality.permissionFailures,
+      rejectRate24h: quality.rejectRate,
+      avgLatencyMs24h: quality.avgLatencyMs,
+      avgSlippageDeviationBps24h: quality.avgSlippageDeviationBps,
       liveEnabled: this.options.liveEnabled,
     };
     return this.riskEngine.canPromoteToLive(gateInput);

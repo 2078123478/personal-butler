@@ -93,4 +93,140 @@ describe("StateStore P0 safety", () => {
     store.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it("computes current balance from baseline plus cumulative pnl", () => {
+    const { dir, store } = createStore("alphaos-state-");
+    const now = new Date().toISOString();
+    store.ensureBalanceBaseline("paper", 1000);
+
+    store.insertOpportunity(
+      {
+        id: "opp-bal-1",
+        strategyId: "dex-arbitrage",
+        pair: "ETH/USDC",
+        buyDex: "a",
+        sellDex: "b",
+        buyPrice: 100,
+        sellPrice: 101,
+        grossEdgeBps: 100,
+        detectedAt: now,
+      },
+      1,
+      1,
+      "executed",
+    );
+    store.insertTrade(
+      "opp-bal-1",
+      "paper",
+      {
+        success: true,
+        txHash: "tx-bal-1",
+        status: "confirmed",
+        grossUsd: 12,
+        feeUsd: 2,
+        netUsd: 10,
+      },
+      now,
+    );
+
+    store.insertOpportunity(
+      {
+        id: "opp-bal-2",
+        strategyId: "dex-arbitrage",
+        pair: "ETH/USDC",
+        buyDex: "a",
+        sellDex: "b",
+        buyPrice: 100,
+        sellPrice: 100.5,
+        grossEdgeBps: 50,
+        detectedAt: now,
+      },
+      1,
+      -1,
+      "failed",
+    );
+    store.insertTrade(
+      "opp-bal-2",
+      "paper",
+      {
+        success: false,
+        txHash: "tx-bal-2",
+        status: "failed",
+        grossUsd: 0,
+        feeUsd: 5,
+        netUsd: -5,
+      },
+      now,
+    );
+
+    expect(store.getCurrentBalance("paper")).toBe(1005);
+
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("aggregates execution quality stats for risk gate inputs", () => {
+    const { dir, store } = createStore("alphaos-state-");
+    const now = new Date().toISOString();
+
+    store.insertOpportunity(
+      {
+        id: "opp-quality-1",
+        strategyId: "dex-arbitrage",
+        pair: "ETH/USDC",
+        buyDex: "a",
+        sellDex: "b",
+        buyPrice: 100,
+        sellPrice: 101,
+        grossEdgeBps: 100,
+        detectedAt: now,
+      },
+      1,
+      1,
+      "rejected",
+    );
+    store.insertOpportunity(
+      {
+        id: "opp-quality-2",
+        strategyId: "dex-arbitrage",
+        pair: "ETH/USDC",
+        buyDex: "a",
+        sellDex: "b",
+        buyPrice: 100,
+        sellPrice: 101,
+        grossEdgeBps: 100,
+        detectedAt: now,
+      },
+      1,
+      1,
+      "executed",
+    );
+
+    store.insertTrade(
+      "opp-quality-2",
+      "live",
+      {
+        success: false,
+        txHash: "tx-quality-1",
+        status: "failed",
+        grossUsd: 0,
+        feeUsd: 1,
+        netUsd: -1,
+        errorType: "permission_denied",
+        latencyMs: 6000,
+        slippageDeviationBps: 90,
+      },
+      now,
+    );
+    store.insertAlert("warn", "live_permission_degraded", "permission denied");
+
+    const stats = store.getExecutionQualityStats(24);
+    expect(stats.permissionFailures).toBe(2);
+    expect(stats.rejectRate).toBe(0.5);
+    expect(stats.avgLatencyMs).toBe(6000);
+    expect(stats.avgSlippageDeviationBps).toBe(90);
+
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });

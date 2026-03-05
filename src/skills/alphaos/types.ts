@@ -66,6 +66,8 @@ export interface TradeResult {
   netUsd: number;
   error?: string;
   errorType?: "permission_denied" | "whitelist_restricted" | "network" | "validation" | "unknown";
+  latencyMs?: number;
+  slippageDeviationBps?: number;
 }
 
 export interface StrategyPlugin {
@@ -95,6 +97,10 @@ export interface GateCheck {
   simulationNetUsd24h: number;
   simulationWinRate24h: number;
   consecutiveFailures: number;
+  permissionFailures24h: number;
+  rejectRate24h: number;
+  avgLatencyMs24h: number;
+  avgSlippageDeviationBps24h: number;
   liveEnabled: boolean;
 }
 

@@ -15,6 +15,10 @@ describe("RiskEngine", () => {
       simulationNetUsd24h: -1,
       simulationWinRate24h: 0.2,
       consecutiveFailures: 3,
+      permissionFailures24h: 1,
+      rejectRate24h: 0.5,
+      avgLatencyMs24h: 4000,
+      avgSlippageDeviationBps24h: 60,
       liveEnabled: true,
     });
 
@@ -23,7 +27,15 @@ describe("RiskEngine", () => {
   });
 
   it("triggers circuit breaker on max losses", () => {
-    const decision = risk.shouldCircuitBreak(4, -100, 1000);
+    const decision = risk.shouldCircuitBreak({
+      consecutiveFailures: 4,
+      dailyNetUsd: -100,
+      balanceUsd: 1000,
+      permissionFailures24h: 0,
+      rejectRate24h: 0,
+      avgLatencyMs24h: 0,
+      avgSlippageDeviationBps24h: 0,
+    });
     expect(decision.breakNow).toBe(true);
   });
 });

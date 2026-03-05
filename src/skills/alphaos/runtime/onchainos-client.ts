@@ -83,10 +83,6 @@ function splitPair(pair: string): { base: string; quote: string } {
   };
 }
 
-function bpsToMultiplier(bps: number): number {
-  return 1 + bps / 10_000;
-}
-
 const V6_PATHS = {
   quote: ["/api/v6/dex/aggregator/quote"],
   swap: ["/api/v6/dex/aggregator/swap"],
@@ -350,65 +346,7 @@ export class OnchainOsClient {
     }
 
     try {
-      const quoteToken = await this.resolveToken(plan.pair, "quote", this.options.chainIndex);
-      const baseToken = await this.resolveToken(plan.pair, "base", this.options.chainIndex);
-      const amount = String(Math.max(1, Math.floor(plan.notionalUsd * 10 ** Math.min(quoteToken.decimals, 6))));
-      const userWalletAddress =
-        typeof plan.metadata?.userWalletAddress === "string" && plan.metadata.userWalletAddress
-          ? plan.metadata.userWalletAddress
-          : "0x1111111111111111111111111111111111111111";
-
-      const quote = await this.getQuoteV6({
-        chainIndex: this.options.chainIndex,
-        fromTokenAddress: quoteToken.address,
-        toTokenAddress: baseToken.address,
-        amount,
-      });
-
-      const swap = await this.buildSwapV6({
-        chainIndex: this.options.chainIndex,
-        fromTokenAddress: quoteToken.address,
-        toTokenAddress: baseToken.address,
-        amount,
-        userWalletAddress,
-        slippage: "0.5",
-      });
-
-      if (this.options.requireSimulate) {
-        const simulate = await this.simulateV6({
-          chainIndex: this.options.chainIndex,
-          txData: swap.txData,
-          to: swap.to,
-          value: swap.value,
-          userWalletAddress,
-        });
-        if (!simulate.success) {
-          throw new OnchainApiError(simulate.message ?? "simulate failed", 400, "SIMULATE_FAILED");
-        }
-      }
-
-      const broadcast = await this.broadcastV6({
-        chainIndex: this.options.chainIndex,
-        txData: swap.txData,
-        to: swap.to,
-        value: swap.value,
-        userWalletAddress,
-      });
-
-      await this.getHistoryV6(broadcast.txHash);
-
-      const grossUsd = this.estimateGrossFromQuote(plan, quote);
-      const feeUsd = this.estimateFeeFromQuote(plan, quote);
-      const netUsd = grossUsd - feeUsd;
-
-      return {
-        success: true,
-        txHash: broadcast.txHash,
-        status: "confirmed",
-        grossUsd,
-        feeUsd,
-        netUsd,
-      };
+      return await this.executeDualLeg(plan);
     } catch (error) {
       this.recordError(error);
       const apiError = error as OnchainApiError;
@@ -426,6 +364,11 @@ export class OnchainOsClient {
             : "permission_denied",
         };
       }
+      const knownValidationCode =
+        apiError instanceof OnchainApiError &&
+        ["ROUTE_MISMATCH", "SIMULATE_FAILED", "SELL_AMOUNT_INVALID", "DUAL_LEG_PARTIAL"].includes(
+          apiError.code ?? "",
+        );
       return {
         success: false,
         txHash: "",
@@ -434,8 +377,167 @@ export class OnchainOsClient {
         feeUsd: 0,
         netUsd: 0,
         error: String(error),
-        errorType: apiError instanceof OnchainApiError ? "network" : "unknown",
+        errorType: knownValidationCode ? "validation" : apiError instanceof OnchainApiError ? "network" : "unknown",
       };
+    }
+  }
+
+  async executeDualLeg(plan: ExecutionPlan): Promise<TradeResult> {
+    const startedAt = Date.now();
+    const quoteToken = await this.resolveToken(plan.pair, "quote", this.options.chainIndex);
+    const baseToken = await this.resolveToken(plan.pair, "base", this.options.chainIndex);
+    const buyAmountRaw = Math.max(1, Math.floor(plan.notionalUsd * 10 ** Math.min(quoteToken.decimals, 6)));
+    const userWalletAddress =
+      typeof plan.metadata?.userWalletAddress === "string" && plan.metadata.userWalletAddress
+        ? plan.metadata.userWalletAddress
+        : "0x1111111111111111111111111111111111111111";
+
+    const buyLeg = await this.executeLeg({
+      chainIndex: this.options.chainIndex,
+      fromTokenAddress: quoteToken.address,
+      toTokenAddress: baseToken.address,
+      amount: String(buyAmountRaw),
+      dexId: plan.buyDex,
+      userWalletAddress,
+      leg: "buy",
+    });
+
+    const sellAmount = Math.max(1, Math.floor(toNumber(buyLeg.quote.toTokenAmount, 0)));
+    if (!Number.isFinite(sellAmount) || sellAmount <= 0) {
+      throw new OnchainApiError("buy leg returned invalid toTokenAmount", 422, "SELL_AMOUNT_INVALID");
+    }
+
+    let sellLeg: {
+      quote: OnchainV6QuoteResponse;
+      broadcast: OnchainV6BroadcastResponse;
+    };
+    try {
+      sellLeg = await this.executeLeg({
+        chainIndex: this.options.chainIndex,
+        fromTokenAddress: baseToken.address,
+        toTokenAddress: quoteToken.address,
+        amount: String(sellAmount),
+        dexId: plan.sellDex,
+        userWalletAddress,
+        leg: "sell",
+      });
+    } catch (error) {
+      const hedge = await this.tryHedgeAfterPartialFill({
+        chainIndex: this.options.chainIndex,
+        fromTokenAddress: baseToken.address,
+        toTokenAddress: quoteToken.address,
+        amount: String(sellAmount),
+        dexId: plan.buyDex,
+        userWalletAddress,
+      });
+      const partialMessage = `buy leg ok tx=${buyLeg.broadcast.txHash}; sell leg failed on ${plan.sellDex}; hedge=${hedge}`;
+      this.options.store?.insertAlert("error", "dual_leg_partial_fill", partialMessage);
+      throw new OnchainApiError(`${partialMessage}; err=${String(error)}`, 409, "DUAL_LEG_PARTIAL");
+    }
+
+    const grossUsd = this.estimateGrossFromQuotes(
+      quoteToken.decimals,
+      buyLeg.quote,
+      sellLeg.quote,
+    );
+    const feeUsd = this.estimateFeeFromQuotes(plan.notionalUsd, buyLeg.quote, sellLeg.quote);
+    const netUsd = grossUsd - feeUsd;
+
+    return {
+      success: true,
+      txHash: `${buyLeg.broadcast.txHash},${sellLeg.broadcast.txHash}`,
+      status: "confirmed",
+      grossUsd,
+      feeUsd,
+      netUsd,
+      latencyMs: Date.now() - startedAt,
+    };
+  }
+
+  private async executeLeg(input: {
+    chainIndex: string;
+    fromTokenAddress: string;
+    toTokenAddress: string;
+    amount: string;
+    dexId: string;
+    userWalletAddress: string;
+    leg: "buy" | "sell" | "hedge";
+  }): Promise<{ quote: OnchainV6QuoteResponse; broadcast: OnchainV6BroadcastResponse }> {
+    const quote = await this.getQuoteV6({
+      chainIndex: input.chainIndex,
+      fromTokenAddress: input.fromTokenAddress,
+      toTokenAddress: input.toTokenAddress,
+      amount: input.amount,
+      dexIds: input.dexId,
+    });
+    this.assertRouteConstraint(quote, input.dexId, input.leg);
+
+    const swap = await this.buildSwapV6({
+      chainIndex: input.chainIndex,
+      fromTokenAddress: input.fromTokenAddress,
+      toTokenAddress: input.toTokenAddress,
+      amount: input.amount,
+      dexIds: input.dexId,
+      userWalletAddress: input.userWalletAddress,
+      slippage: "0.5",
+    });
+
+    if (this.options.requireSimulate) {
+      const simulate = await this.simulateV6({
+        chainIndex: input.chainIndex,
+        txData: swap.txData,
+        to: swap.to,
+        value: swap.value,
+        userWalletAddress: input.userWalletAddress,
+      });
+      if (!simulate.success) {
+        throw new OnchainApiError(simulate.message ?? `${input.leg} leg simulate failed`, 400, "SIMULATE_FAILED");
+      }
+    }
+
+    const broadcast = await this.broadcastV6({
+      chainIndex: input.chainIndex,
+      txData: swap.txData,
+      to: swap.to,
+      value: swap.value,
+      userWalletAddress: input.userWalletAddress,
+    });
+    await this.getHistoryV6(broadcast.txHash);
+    return { quote, broadcast };
+  }
+
+  private async tryHedgeAfterPartialFill(input: {
+    chainIndex: string;
+    fromTokenAddress: string;
+    toTokenAddress: string;
+    amount: string;
+    dexId: string;
+    userWalletAddress: string;
+  }): Promise<string> {
+    try {
+      const hedgeLeg = await this.executeLeg({
+        ...input,
+        leg: "hedge",
+      });
+      return `submitted:${hedgeLeg.broadcast.txHash}`;
+    } catch (error) {
+      return `failed:${String(error)}`;
+    }
+  }
+
+  private assertRouteConstraint(quote: OnchainV6QuoteResponse, expectedDex: string, leg: "buy" | "sell" | "hedge") {
+    const routers = quote.dexRouterList ?? [];
+    if (routers.length === 0) {
+      return;
+    }
+    const target = expectedDex.toLowerCase();
+    const matched = routers.some((router) => (router.dexName ?? "").toLowerCase().includes(target));
+    if (!matched) {
+      throw new OnchainApiError(
+        `${leg} leg route mismatch: expected dex ${expectedDex}`,
+        422,
+        "ROUTE_MISMATCH",
+      );
     }
   }
 
@@ -473,6 +575,7 @@ export class OnchainOsClient {
       amount: input.amount,
       userWalletAddress: input.userWalletAddress,
       ...(input.slippage ? { slippage: input.slippage } : {}),
+      ...(input.dexIds ? { dexIds: input.dexIds } : {}),
     };
 
     const payload = await this.requestWithFallback<Record<string, unknown>>({
@@ -645,21 +748,30 @@ export class OnchainOsClient {
     });
   }
 
-  private estimateGrossFromQuote(plan: ExecutionPlan, quote: OnchainV6QuoteResponse): number {
-    const quotedFrom = toNumber(quote.fromTokenAmount);
-    const quotedTo = toNumber(quote.toTokenAmount);
-    if (quotedFrom > 0 && quotedTo > 0) {
-      const impliedPrice = quotedFrom / quotedTo;
-      const targetPrice = impliedPrice * bpsToMultiplier(45);
-      return ((targetPrice - impliedPrice) / impliedPrice) * plan.notionalUsd;
+  private estimateGrossFromQuotes(
+    quoteTokenDecimals: number,
+    buyQuote: OnchainV6QuoteResponse,
+    sellQuote: OnchainV6QuoteResponse,
+  ): number {
+    const buySpendRaw = toNumber(buyQuote.fromTokenAmount);
+    const sellReceiveRaw = toNumber(sellQuote.toTokenAmount);
+    if (buySpendRaw > 0 && sellReceiveRaw > 0) {
+      const divisor = 10 ** Math.min(Math.max(0, quoteTokenDecimals), 12);
+      return (sellReceiveRaw - buySpendRaw) / divisor;
     }
-    return ((plan.sellPrice - plan.buyPrice) / plan.buyPrice) * plan.notionalUsd;
+    return 0;
   }
 
-  private estimateFeeFromQuote(plan: ExecutionPlan, quote: OnchainV6QuoteResponse): number {
-    const gas = toNumber(quote.estimateGasFee, this.options.gasUsdDefault);
-    const tradeFee = toNumber(quote.tradeFee, plan.notionalUsd * 0.0012);
-    return gas + tradeFee;
+  private estimateFeeFromQuotes(
+    notionalUsd: number,
+    buyQuote: OnchainV6QuoteResponse,
+    sellQuote: OnchainV6QuoteResponse,
+  ): number {
+    const buyGas = toNumber(buyQuote.estimateGasFee, this.options.gasUsdDefault);
+    const sellGas = toNumber(sellQuote.estimateGasFee, this.options.gasUsdDefault);
+    const buyTradeFee = toNumber(buyQuote.tradeFee, notionalUsd * 0.0006);
+    const sellTradeFee = toNumber(sellQuote.tradeFee, notionalUsd * 0.0006);
+    return buyGas + sellGas + buyTradeFee + sellTradeFee;
   }
 
   private pickPayload(raw: unknown): Record<string, unknown> {

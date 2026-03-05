@@ -241,4 +241,259 @@ describe("OnchainOsClient v6 integration", () => {
     expect(probe.simulatePath).toContain("/api/v6/dex/pre-transaction/simulate");
     expect(mockFetch).toHaveBeenCalledTimes(5);
   });
+
+  it("executes dual-leg with buy/sell dex constraints and no hardcoded profit bias", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-dual-leg-"));
+    tempDirs.push(tempDir);
+    const store = new StateStore(tempDir);
+    stores.push(store);
+
+    let broadcastCount = 0;
+    const mockFetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      const pathname = url.pathname;
+      const from = url.searchParams.get("fromTokenAddress");
+      const to = url.searchParams.get("toTokenAddress");
+      const dexIds = url.searchParams.get("dexIds");
+      const tokenSymbol = url.searchParams.get("tokenSymbol");
+
+      if (pathname.includes("/market/token/profile/current")) {
+        if (tokenSymbol === "USDC") {
+          return jsonResponse({ data: [{ tokenContractAddress: "0xusdc", tokenDecimal: "6" }] });
+        }
+        return jsonResponse({ data: [{ tokenContractAddress: "0xeth", tokenDecimal: "18" }] });
+      }
+      if (pathname.includes("/aggregator/quote")) {
+        if (from === "0xusdc" && to === "0xeth") {
+          expect(dexIds).toBe("dex-a");
+          return jsonResponse({
+            data: [
+              {
+                fromTokenAmount: "100000000",
+                toTokenAmount: "50000000000000000",
+                estimateGasFee: "0",
+                tradeFee: "0",
+                dexRouterList: [{ dexName: "dex-a" }],
+              },
+            ],
+          });
+        }
+        expect(dexIds).toBe("dex-b");
+        return jsonResponse({
+          data: [
+            {
+              fromTokenAmount: "50000000000000000",
+              toTokenAmount: "100000000",
+              estimateGasFee: "0",
+              tradeFee: "0",
+              dexRouterList: [{ dexName: "dex-b" }],
+            },
+          ],
+        });
+      }
+      if (pathname.includes("/aggregator/swap")) {
+        if (from === "0xusdc" && to === "0xeth") {
+          expect(dexIds).toBe("dex-a");
+          return jsonResponse({ data: [{ txData: "0xbuy", to: "0xrouter-a", value: "0" }] });
+        }
+        expect(dexIds).toBe("dex-b");
+        return jsonResponse({ data: [{ txData: "0xsell", to: "0xrouter-b", value: "0" }] });
+      }
+      if (pathname.includes("/pre-transaction/simulate")) {
+        return jsonResponse({ data: [{ success: true }] });
+      }
+      if (pathname.includes("/broadcast-transaction")) {
+        broadcastCount += 1;
+        return jsonResponse({ data: [{ txHash: `0xtx-${broadcastCount}` }] });
+      }
+      if (pathname.includes("/aggregator/history")) {
+        return jsonResponse({ data: [{ status: "confirmed" }] });
+      }
+      return jsonResponse({ code: "404" }, 404);
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const client = new OnchainOsClient({
+      apiBase: "http://localhost:9999",
+      apiKey: "k1",
+      authMode: "bearer",
+      apiKeyHeader: "X-API-Key",
+      gasUsdDefault: 1,
+      chainIndex: "196",
+      requireSimulate: true,
+      enableCompatFallback: false,
+      tokenCacheTtlSeconds: 600,
+      tokenProfilePath: "/api/v6/market/token/profile/current",
+      store,
+    });
+
+    const result = await client.executePlan({
+      opportunityId: "opp-2",
+      strategyId: "dex-arbitrage",
+      pair: "ETH/USDC",
+      buyDex: "dex-a",
+      sellDex: "dex-b",
+      buyPrice: 100,
+      sellPrice: 100.5,
+      notionalUsd: 100,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.grossUsd).toBe(0);
+    expect(result.netUsd).toBe(0);
+    expect(result.txHash).toContain("0xtx-1");
+    expect(result.txHash).toContain("0xtx-2");
+  });
+
+  it("fails when quote route does not match constrained dex", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-route-"));
+    tempDirs.push(tempDir);
+    const store = new StateStore(tempDir);
+    stores.push(store);
+
+    const mockFetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.includes("/market/token/profile/current")) {
+        const symbol = url.searchParams.get("tokenSymbol");
+        if (symbol === "USDC") {
+          return jsonResponse({ data: [{ tokenContractAddress: "0xusdc", tokenDecimal: "6" }] });
+        }
+        return jsonResponse({ data: [{ tokenContractAddress: "0xeth", tokenDecimal: "18" }] });
+      }
+      if (url.pathname.includes("/aggregator/quote")) {
+        return jsonResponse({
+          data: [
+            {
+              fromTokenAmount: "1000000",
+              toTokenAmount: "1000000000000000",
+              dexRouterList: [{ dexName: "wrong-dex" }],
+            },
+          ],
+        });
+      }
+      return jsonResponse({ code: "404" }, 404);
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const client = new OnchainOsClient({
+      apiBase: "http://localhost:9999",
+      apiKey: "k1",
+      authMode: "bearer",
+      apiKeyHeader: "X-API-Key",
+      gasUsdDefault: 1,
+      chainIndex: "196",
+      requireSimulate: true,
+      enableCompatFallback: false,
+      tokenCacheTtlSeconds: 600,
+      tokenProfilePath: "/api/v6/market/token/profile/current",
+      store,
+    });
+
+    const result = await client.executePlan({
+      opportunityId: "opp-3",
+      strategyId: "dex-arbitrage",
+      pair: "ETH/USDC",
+      buyDex: "dex-a",
+      sellDex: "dex-b",
+      buyPrice: 100,
+      sellPrice: 101,
+      notionalUsd: 10,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorType).toBe("validation");
+  });
+
+  it("records alert and hedges when first leg succeeds but second leg fails", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-partial-"));
+    tempDirs.push(tempDir);
+    const store = new StateStore(tempDir);
+    stores.push(store);
+
+    let quoteCount = 0;
+    let swapCount = 0;
+    let broadcastCount = 0;
+    const mockFetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      const pathName = url.pathname;
+      const symbol = url.searchParams.get("tokenSymbol");
+      const dexIds = url.searchParams.get("dexIds");
+
+      if (pathName.includes("/market/token/profile/current")) {
+        if (symbol === "USDC") {
+          return jsonResponse({ data: [{ tokenContractAddress: "0xusdc", tokenDecimal: "6" }] });
+        }
+        return jsonResponse({ data: [{ tokenContractAddress: "0xeth", tokenDecimal: "18" }] });
+      }
+      if (pathName.includes("/aggregator/quote")) {
+        quoteCount += 1;
+        if (quoteCount === 1) {
+          expect(dexIds).toBe("dex-a");
+          return jsonResponse({
+            data: [{ fromTokenAmount: "1000000", toTokenAmount: "2000000000000000", dexRouterList: [{ dexName: "dex-a" }] }],
+          });
+        }
+        if (quoteCount === 2) {
+          expect(dexIds).toBe("dex-b");
+          return jsonResponse({
+            data: [{ fromTokenAmount: "2000000000000000", toTokenAmount: "999000", dexRouterList: [{ dexName: "dex-b" }] }],
+          });
+        }
+        expect(dexIds).toBe("dex-a");
+        return jsonResponse({
+          data: [{ fromTokenAmount: "2000000000000000", toTokenAmount: "998000", dexRouterList: [{ dexName: "dex-a" }] }],
+        });
+      }
+      if (pathName.includes("/aggregator/swap")) {
+        swapCount += 1;
+        if (swapCount === 2) {
+          return jsonResponse({ code: "FAIL", msg: "sell failed" }, 500);
+        }
+        return jsonResponse({ data: [{ txData: `0xswap-${swapCount}`, to: "0xrouter", value: "0" }] });
+      }
+      if (pathName.includes("/pre-transaction/simulate")) {
+        return jsonResponse({ data: [{ success: true }] });
+      }
+      if (pathName.includes("/broadcast-transaction")) {
+        broadcastCount += 1;
+        return jsonResponse({ data: [{ txHash: `0xhedge-${broadcastCount}` }] });
+      }
+      if (pathName.includes("/aggregator/history")) {
+        return jsonResponse({ data: [{ status: "confirmed" }] });
+      }
+      return jsonResponse({ code: "404" }, 404);
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const client = new OnchainOsClient({
+      apiBase: "http://localhost:9999",
+      apiKey: "k1",
+      authMode: "bearer",
+      apiKeyHeader: "X-API-Key",
+      gasUsdDefault: 1,
+      chainIndex: "196",
+      requireSimulate: true,
+      enableCompatFallback: false,
+      tokenCacheTtlSeconds: 600,
+      tokenProfilePath: "/api/v6/market/token/profile/current",
+      store,
+    });
+
+    const result = await client.executePlan({
+      opportunityId: "opp-4",
+      strategyId: "dex-arbitrage",
+      pair: "ETH/USDC",
+      buyDex: "dex-a",
+      sellDex: "dex-b",
+      buyPrice: 100,
+      sellPrice: 101,
+      notionalUsd: 1,
+    });
+
+    const alerts = store.listAlerts(5);
+    expect(result.success).toBe(false);
+    expect(result.errorType).toBe("validation");
+    expect(alerts.some((alert) => alert.eventType === "dual_leg_partial_fill")).toBe(true);
+    expect(alerts.some((alert) => alert.message.includes("hedge=submitted"))).toBe(true);
+  });
 });

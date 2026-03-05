@@ -108,6 +108,9 @@ export class StateStore {
         gross_usd REAL NOT NULL,
         fee_usd REAL NOT NULL,
         net_usd REAL NOT NULL,
+        error_type TEXT,
+        latency_ms REAL,
+        slippage_deviation_bps REAL,
         created_at TEXT NOT NULL,
         settled_at TEXT
       );
@@ -171,6 +174,12 @@ export class StateStore {
         PRIMARY KEY(symbol, chain_index)
       );
 
+      CREATE TABLE IF NOT EXISTS mode_balances (
+        mode TEXT PRIMARY KEY,
+        baseline_usd REAL NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_opportunities_status_detected_at
       ON opportunities(status, detected_at DESC);
 
@@ -191,6 +200,9 @@ export class StateStore {
     `);
 
     this.ensureColumn(this.alphaDb, "opportunities", "metadata_json", "TEXT");
+    this.ensureColumn(this.alphaDb, "trades", "error_type", "TEXT");
+    this.ensureColumn(this.alphaDb, "trades", "latency_ms", "REAL");
+    this.ensureColumn(this.alphaDb, "trades", "slippage_deviation_bps", "REAL");
 
     this.vaultDb.exec(`
       CREATE TABLE IF NOT EXISTS vault_items (
@@ -451,8 +463,9 @@ export class StateStore {
       this.alphaDb
         .prepare(
           `INSERT INTO trades (
-            id, opportunity_id, mode, tx_hash, status, gross_usd, fee_usd, net_usd, created_at, settled_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            id, opportunity_id, mode, tx_hash, status, gross_usd, fee_usd, net_usd,
+            error_type, latency_ms, slippage_deviation_bps, created_at, settled_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           crypto.randomUUID(),
@@ -463,6 +476,9 @@ export class StateStore {
           trade.grossUsd,
           trade.feeUsd,
           trade.netUsd,
+          trade.errorType ?? null,
+          trade.latencyMs ?? null,
+          trade.slippageDeviationBps ?? null,
           createdAt,
           createdAt,
         );
@@ -598,6 +614,17 @@ export class StateStore {
          LIMIT ?`,
       )
       .all(limit);
+  }
+
+  listAlerts(limit: number): Array<{ level: string; eventType: string; message: string; createdAt: string }> {
+    return this.alphaDb
+      .prepare(
+        `SELECT level, event_type AS eventType, message, created_at AS createdAt
+         FROM alerts
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(limit) as Array<{ level: string; eventType: string; message: string; createdAt: string }>;
   }
 
   listStrategyStatusToday(): StrategyStatus[] {
@@ -748,6 +775,81 @@ export class StateStore {
       .prepare("SELECT net_usd FROM pnl_daily WHERE day = ? AND mode = ?")
       .get(utcDay(), mode) as { net_usd: number } | undefined;
     return row?.net_usd ?? 0;
+  }
+
+  ensureBalanceBaseline(mode: ExecutionMode, baselineUsd: number): void {
+    const now = new Date().toISOString();
+    this.alphaDb
+      .prepare(
+        `INSERT INTO mode_balances (mode, baseline_usd, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(mode) DO NOTHING`,
+      )
+      .run(mode, baselineUsd, now);
+  }
+
+  getCurrentBalance(mode: ExecutionMode): number {
+    const baselineRow = this.alphaDb
+      .prepare("SELECT baseline_usd AS baselineUsd FROM mode_balances WHERE mode = ?")
+      .get(mode) as { baselineUsd: number } | undefined;
+    const pnlRow = this.alphaDb
+      .prepare("SELECT COALESCE(SUM(net_usd), 0) AS cumulativeNetUsd FROM pnl_daily WHERE mode = ?")
+      .get(mode) as { cumulativeNetUsd: number };
+    const baseline = baselineRow?.baselineUsd ?? 0;
+    return baseline + pnlRow.cumulativeNetUsd;
+  }
+
+  getExecutionQualityStats(hours: number): {
+    permissionFailures: number;
+    rejectRate: number;
+    avgLatencyMs: number;
+    avgSlippageDeviationBps: number;
+  } {
+    const safeHours = Math.max(1, Math.min(24 * 30, Math.floor(hours)));
+    const since = new Date(Date.now() - safeHours * 60 * 60 * 1000).toISOString();
+
+    const permissionTradeRow = this.alphaDb
+      .prepare(
+        `SELECT COUNT(1) AS count
+         FROM trades
+         WHERE created_at >= ?
+           AND error_type IN ('permission_denied', 'whitelist_restricted')`,
+      )
+      .get(since) as { count: number };
+    const permissionAlertRow = this.alphaDb
+      .prepare(
+        `SELECT COUNT(1) AS count
+         FROM alerts
+         WHERE created_at >= ?
+           AND event_type = 'live_permission_degraded'`,
+      )
+      .get(since) as { count: number };
+
+    const opportunityRow = this.alphaDb
+      .prepare(
+        `SELECT COUNT(1) AS total,
+                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected
+         FROM opportunities
+         WHERE detected_at >= ?`,
+      )
+      .get(since) as { total: number; rejected: number | null };
+
+    const tradeQualityRow = this.alphaDb
+      .prepare(
+        `SELECT COALESCE(AVG(latency_ms), 0) AS avgLatencyMs,
+                COALESCE(AVG(ABS(slippage_deviation_bps)), 0) AS avgSlippageDeviationBps
+         FROM trades
+         WHERE created_at >= ?`,
+      )
+      .get(since) as { avgLatencyMs: number; avgSlippageDeviationBps: number };
+
+    return {
+      permissionFailures: permissionTradeRow.count + permissionAlertRow.count,
+      rejectRate:
+        opportunityRow.total > 0 ? (opportunityRow.rejected ?? 0) / opportunityRow.total : 0,
+      avgLatencyMs: tradeQualityRow.avgLatencyMs,
+      avgSlippageDeviationBps: tradeQualityRow.avgSlippageDeviationBps,
+    };
   }
 
   insertWhaleSignal(input: {
