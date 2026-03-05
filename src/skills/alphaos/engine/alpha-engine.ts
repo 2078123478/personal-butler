@@ -9,6 +9,7 @@ import type {
   SimulationResult,
   SkillManifest,
   StrategyPlugin,
+  TradeResult,
 } from "../types";
 import { MarketWatch } from "../runtime/market-watch";
 import { Simulator } from "../runtime/simulator";
@@ -222,50 +223,13 @@ export class AlphaEngine {
         return;
       }
 
-      if (this.desiredMode === "live" && this.options.autoPromoteToLive) {
-        const gate = this.evaluateLiveGate();
-        if (gate.passed && this.mode !== "live") {
-          this.mode = "live";
-          await this.notifier.publish({ mode: "live", level: "info", event: "engine_recovered" });
-        }
-      }
+      await this.maybePromoteToLive();
 
       const quotes = await this.marketWatch.fetch(this.options.pair, this.options.dexes);
-      const freshQuotes = quotes.filter((quote) => {
-        const quoteMs = Date.parse(quote.ts);
-        if (!Number.isFinite(quoteMs)) {
-          this.store.recordQuoteQuality({ stale: true, latencyMs: null });
-          this.store.insertAlert("warn", "stale_quote_engine", `invalid quote ts ${quote.pair}@${quote.dex}`);
-          return false;
-        }
-        const latencyMs = Math.max(0, Date.now() - quoteMs);
-        const fresh = latencyMs <= this.quoteStaleMs;
-        if (!fresh) {
-          this.store.recordQuoteQuality({ stale: true, latencyMs });
-          this.store.insertAlert(
-            "warn",
-            "stale_quote_engine",
-            `stale quote dropped ${quote.pair}@${quote.dex} latencyMs=${latencyMs}`,
-          );
-        }
-        return fresh;
-      });
+      const freshQuotes = this.filterFreshQuotes(quotes);
 
       for (const plugin of this.plugins) {
-        try {
-          const opportunities = await plugin.scan({
-            pair: this.options.pair,
-            quotes: freshQuotes,
-            nowIso: new Date().toISOString(),
-          });
-
-          for (const opp of opportunities) {
-            await this.processOpportunity(plugin, opp, freshQuotes);
-          }
-        } catch (error) {
-          this.logger.error({ err: error, strategy: plugin.id }, "plugin scan failed");
-          this.store.insertAlert("error", "plugin_scan_failure", `${plugin.id}: ${String(error)}`);
-        }
+        await this.processPluginScan(plugin, freshQuotes);
       }
     } catch (error) {
       this.logger.error({ err: error }, "engine tick failed");
@@ -383,39 +347,128 @@ export class AlphaEngine {
       slippageDeviationBps: trade.slippageDeviationBps ?? slippageDeviationBps,
     };
 
-    if (
-      effectiveMode === "live" &&
-      !trade.success &&
-      (trade.errorType === "permission_denied" || trade.errorType === "whitelist_restricted")
-    ) {
-      this.store.updateOpportunityStatus(opportunity.id, "degraded_to_paper");
-      this.store.insertAlert(
-        "warn",
-        "live_permission_degraded",
-        `degraded to paper: ${trade.errorType} ${trade.error ?? ""}`.trim(),
-      );
-      await this.notifier.publish({
-        mode: "live",
-        level: "warn",
-        event: "risk_alert",
-        pair: opportunity.pair,
-        strategyId: plugin.id,
-      });
-
-      const paperTrade = await this.executor.execute("paper", plan, simulation);
-      this.store.insertTrade(opportunity.id, "paper", paperTrade, new Date().toISOString());
-      await this.notifier.publish({
-        mode: "paper",
-        level: "info",
-        event: "trade_executed",
-        pair: opportunity.pair,
-        netUsd: paperTrade.netUsd,
-        txHash: paperTrade.txHash,
-        strategyId: plugin.id,
-      });
+    if (this.shouldDegradeToPaper(effectiveMode, trade)) {
+      await this.handleLivePermissionDegrade(plugin, opportunity, plan, simulation, trade.errorType, trade.error);
       return;
     }
 
+    await this.handleTradeResult(plugin, opportunity, effectiveMode, trade, tradeForStore);
+  }
+
+  private async maybePromoteToLive(): Promise<void> {
+    if (this.desiredMode !== "live" || !this.options.autoPromoteToLive || this.mode === "live") {
+      return;
+    }
+
+    const gate = this.evaluateLiveGate();
+    if (!gate.passed) {
+      return;
+    }
+
+    this.mode = "live";
+    await this.notifier.publish({ mode: "live", level: "info", event: "engine_recovered" });
+  }
+
+  private filterFreshQuotes(quotes: Quote[]): Quote[] {
+    return quotes.filter((quote) => {
+      const quoteMs = Date.parse(quote.ts);
+      if (!Number.isFinite(quoteMs)) {
+        this.store.recordQuoteQuality({ stale: true, latencyMs: null });
+        this.store.insertAlert("warn", "stale_quote_engine", `invalid quote ts ${quote.pair}@${quote.dex}`);
+        return false;
+      }
+
+      const latencyMs = Math.max(0, Date.now() - quoteMs);
+      const fresh = latencyMs <= this.quoteStaleMs;
+      if (fresh) {
+        return true;
+      }
+
+      this.store.recordQuoteQuality({ stale: true, latencyMs });
+      this.store.insertAlert(
+        "warn",
+        "stale_quote_engine",
+        `stale quote dropped ${quote.pair}@${quote.dex} latencyMs=${latencyMs}`,
+      );
+      return false;
+    });
+  }
+
+  private async processPluginScan(plugin: StrategyPlugin, quotes: Quote[]): Promise<void> {
+    try {
+      const opportunities = await plugin.scan({
+        pair: this.options.pair,
+        quotes,
+        nowIso: new Date().toISOString(),
+      });
+      for (const opportunity of opportunities) {
+        await this.processOpportunity(plugin, opportunity, quotes);
+      }
+    } catch (error) {
+      this.logger.error({ err: error, strategy: plugin.id }, "plugin scan failed");
+      this.store.insertAlert("error", "plugin_scan_failure", `${plugin.id}: ${String(error)}`);
+    }
+  }
+
+  private shouldDegradeToPaper(mode: ExecutionMode, trade: TradeResult): boolean {
+    if (mode !== "live" || trade.success) {
+      return false;
+    }
+    return trade.errorType === "permission_denied" || trade.errorType === "whitelist_restricted";
+  }
+
+  private async handleLivePermissionDegrade(
+    plugin: StrategyPlugin,
+    opportunity: Opportunity,
+    plan: {
+      opportunityId: string;
+      strategyId: string;
+      pair: string;
+      buyDex: string;
+      sellDex: string;
+      buyPrice: number;
+      sellPrice: number;
+      notionalUsd: number;
+      metadata?: Record<string, unknown>;
+    },
+    simulation: SimulationResult,
+    errorType: TradeResult["errorType"],
+    errorMessage: string | undefined,
+  ): Promise<void> {
+    this.store.updateOpportunityStatus(opportunity.id, "degraded_to_paper");
+    this.store.insertAlert(
+      "warn",
+      "live_permission_degraded",
+      `degraded to paper: ${errorType} ${errorMessage ?? ""}`.trim(),
+    );
+    await this.notifier.publish({
+      mode: "live",
+      level: "warn",
+      event: "risk_alert",
+      pair: opportunity.pair,
+      strategyId: plugin.id,
+    });
+
+    const paperTrade = await this.executor.execute("paper", plan, simulation);
+    this.store.insertTrade(opportunity.id, "paper", paperTrade, new Date().toISOString());
+    await this.notifier.publish({
+      mode: "paper",
+      level: "info",
+      event: "trade_executed",
+      pair: opportunity.pair,
+      netUsd: paperTrade.netUsd,
+      txHash: paperTrade.txHash,
+      strategyId: plugin.id,
+    });
+  }
+
+  private async handleTradeResult(
+    plugin: StrategyPlugin,
+    opportunity: Opportunity,
+    effectiveMode: ExecutionMode,
+    trade: TradeResult,
+    tradeForStore: TradeResult,
+  ): Promise<void> {
     this.store.insertTrade(opportunity.id, effectiveMode, tradeForStore, new Date().toISOString());
 
     if (trade.success) {
@@ -446,6 +499,14 @@ export class AlphaEngine {
       strategyId: plugin.id,
     });
 
+    await this.maybeTriggerCircuitBreaker(plugin, opportunity, effectiveMode);
+  }
+
+  private async maybeTriggerCircuitBreaker(
+    plugin: StrategyPlugin,
+    opportunity: Opportunity,
+    effectiveMode: ExecutionMode,
+  ): Promise<void> {
     const dailyNet = this.store.getTodayNetUsd(effectiveMode);
     const balanceNow = this.store.getCurrentBalance(effectiveMode);
     const quality = this.store.getExecutionQualityStats(24);
@@ -458,18 +519,20 @@ export class AlphaEngine {
       avgLatencyMs24h: quality.avgLatencyMs,
       avgSlippageDeviationBps24h: quality.avgSlippageDeviationBps,
     });
-    if (breakDecision.breakNow) {
-      this.mode = "paper";
-      this.circuitBreakerUntil = Date.now() + 5 * 60 * 1000;
-      this.store.insertAlert("error", "circuit_breaker", breakDecision.reasons.join("; "));
-      await this.notifier.publish({
-        mode: "paper",
-        level: "error",
-        event: "risk_alert",
-        pair: opportunity.pair,
-        strategyId: plugin.id,
-      });
+    if (!breakDecision.breakNow) {
+      return;
     }
+
+    this.mode = "paper";
+    this.circuitBreakerUntil = Date.now() + 5 * 60 * 1000;
+    this.store.insertAlert("error", "circuit_breaker", breakDecision.reasons.join("; "));
+    await this.notifier.publish({
+      mode: "paper",
+      level: "error",
+      event: "risk_alert",
+      pair: opportunity.pair,
+      strategyId: plugin.id,
+    });
   }
 
   private evaluateLiveGate(): { passed: boolean; reasons: string[] } {
