@@ -78,6 +78,7 @@ function demoHtml(): string {
       --muted: #94a3b8;
       --ok: #34d399;
       --warn: #fb923c;
+      --bad: #f87171;
     }
     body {
       margin: 0;
@@ -112,6 +113,10 @@ function demoHtml(): string {
     .feed { max-height: 280px; overflow: auto; }
     .chip { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin:0 4px 4px 0; font-size:12px; }
     .warn { color: var(--warn); }
+    .status.available { color: var(--ok); }
+    .status.restricted { color: var(--warn); }
+    .status.degraded { color: var(--bad); }
+    .meta { margin-top: 8px; font-size: 12px; color: var(--muted); }
   </style>
 </head>
 <body>
@@ -121,6 +126,11 @@ function demoHtml(): string {
     <div class="card"><h2>Trades</h2><div id="trades" class="kpi">0</div></div>
     <div class="card"><h2>Opportunities</h2><div id="opps" class="kpi">0</div></div>
     <div class="card"><h2>Mode</h2><div id="mode" class="kpi warn">paper</div></div>
+    <div class="card">
+      <h2>Official Link</h2>
+      <div id="official-status" class="kpi status degraded">降级</div>
+      <div id="official-hint" class="meta">Probe pending...</div>
+    </div>
   </div>
 
   <div class="grid" style="margin-top:14px;">
@@ -131,6 +141,10 @@ function demoHtml(): string {
     <div class="card">
       <h2>Latest Share Card</h2>
       <pre id="share">No successful trade yet</pre>
+    </div>
+    <div class="card">
+      <h2>OnchainOS v6 Probe</h2>
+      <pre id="probe">Probe pending...</pre>
     </div>
     <div class="card feed">
       <h2>Live Stream Feed</h2>
@@ -144,10 +158,110 @@ function demoHtml(): string {
       trades: document.getElementById("trades"),
       opps: document.getElementById("opps"),
       mode: document.getElementById("mode"),
+      officialStatus: document.getElementById("official-status"),
+      officialHint: document.getElementById("official-hint"),
       strategies: document.getElementById("strategies"),
       share: document.getElementById("share"),
+      probe: document.getElementById("probe"),
       feed: document.getElementById("feed"),
     };
+
+    const OFFICIAL_LABEL = {
+      available: "可用",
+      restricted: "受限",
+      degraded: "降级",
+    };
+
+    function isV6Path(path) {
+      return typeof path === "string" && path.startsWith("/api/v6/");
+    }
+
+    function includesRestrictedHint(text) {
+      const value = String(text || "").toLowerCase();
+      return (
+        value.includes("whitelist") ||
+        value.includes("permission") ||
+        value.includes("unauthorized") ||
+        value.includes("forbidden") ||
+        value.includes("restricted") ||
+        value.includes("403") ||
+        value.includes("401")
+      );
+    }
+
+    function classifyOfficialStatus(probe, integration, statusCode) {
+      const message = probe && typeof probe === "object" ? probe.message : "";
+      const restricted = includesRestrictedHint(message) || includesRestrictedHint(integration && integration.lastError);
+
+      const probePaths = [
+        probe && probe.quotePath,
+        probe && probe.swapPath,
+        probe && probe.simulatePath,
+      ].filter((path) => typeof path === "string" && path.length > 0);
+      const fallbackByProbe = probePaths.some((path) => !isV6Path(path));
+      const fallbackByStatus = integration && typeof integration.lastUsedPath === "string" && !isV6Path(integration.lastUsedPath);
+
+      if (probe && probe.ok === true && !fallbackByProbe && !fallbackByStatus) {
+        return "available";
+      }
+      if (restricted || statusCode === 401 || statusCode === 403) {
+        return "restricted";
+      }
+      return "degraded";
+    }
+
+    function renderOfficialStatus(level) {
+      el.officialStatus.textContent = OFFICIAL_LABEL[level];
+      el.officialStatus.className = "kpi status " + level;
+      el.officialHint.textContent =
+        level === "available"
+          ? "官方 v6 链路可用"
+          : level === "restricted"
+            ? "权限受限，建议核验白名单与 API 权限"
+            : "官方链路受阻，按降级路径运行";
+    }
+
+    async function refreshProbe() {
+      const requestedAt = new Date().toISOString();
+      try {
+        const [integrationResp, probeResp] = await Promise.all([
+          fetch("/api/v1/integration/onchainos/status"),
+          fetch("/api/v1/integration/onchainos/probe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pair: "ETH/USDC", chainIndex: "196", notionalUsd: 25 }),
+          }),
+        ]);
+        const integration = integrationResp.ok ? await integrationResp.json() : null;
+        const probe = await probeResp.json();
+        const level = classifyOfficialStatus(probe, integration, probeResp.status);
+        renderOfficialStatus(level);
+        el.probe.textContent = JSON.stringify(
+          {
+            officialStatus: level,
+            checkedAt: probe.checkedAt || requestedAt,
+            integration,
+            probe,
+          },
+          null,
+          2,
+        );
+      } catch (error) {
+        renderOfficialStatus("degraded");
+        el.probe.textContent = JSON.stringify(
+          {
+            officialStatus: "degraded",
+            checkedAt: requestedAt,
+            error: String(error),
+          },
+          null,
+          2,
+        );
+      }
+    }
+
+    refreshProbe();
+    setInterval(refreshProbe, 30000);
 
     const stream = new EventSource("/api/v1/stream/metrics");
     stream.onmessage = (evt) => {
