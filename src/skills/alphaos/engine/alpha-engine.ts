@@ -244,7 +244,7 @@ export class AlphaEngine {
     const quoteGas = quotes.find((q) => q.dex === opportunity.buyDex)?.gasUsd ?? 1;
     this.store.insertOpportunity(opportunity, quoteGas, 0, "detected");
     await this.notifier.publish({
-      mode: this.mode,
+      mode: this.resolveExecutionMode(),
       level: "info",
       event: "alpha_found",
       pair: opportunity.pair,
