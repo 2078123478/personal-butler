@@ -1044,41 +1044,72 @@ export class OnchainOsClient {
   }
 
   private buildAuthHeaders(url: URL, method: string, body?: string): Record<string, string> {
-    const headers: Record<string, string> = {};
     const apiKey = this.options.apiKey;
-
     if (!apiKey) {
-      return headers;
+      return {};
     }
 
-    if (this.options.authMode === "bearer") {
-      headers.Authorization = `Bearer ${apiKey}`;
-    } else if (this.options.authMode === "api-key") {
-      headers[this.options.apiKeyHeader] = apiKey;
-    } else {
-      const apiSecret = this.options.apiSecret;
-      if (!apiSecret) {
-        return headers;
-      }
-      const timestamp = new Date().toISOString();
-      const path = url.pathname;
-      const queryString = url.search;
-      const signingBody = body ?? "";
-      const message = `${timestamp}${method.toUpperCase()}${path}${queryString}${signingBody}`;
-      const signature = crypto.createHmac("sha256", apiSecret).update(message).digest("base64");
-
-      headers["OK-ACCESS-KEY"] = apiKey;
-      headers["OK-ACCESS-SIGN"] = signature;
-      headers["OK-ACCESS-TIMESTAMP"] = timestamp;
-      if (this.options.passphrase) {
-        headers["OK-ACCESS-PASSPHRASE"] = this.options.passphrase;
-      }
-    }
+    const headers = this.buildModeAuthHeaders(apiKey, url, method, body);
 
     if (this.options.projectId) {
       headers["OK-ACCESS-PROJECT"] = this.options.projectId;
     }
 
+    return headers;
+  }
+
+  private buildModeAuthHeaders(
+    apiKey: string,
+    url: URL,
+    method: string,
+    body?: string,
+  ): Record<string, string> {
+    switch (this.options.authMode) {
+      case "bearer":
+        return this.buildBearerAuthHeaders(apiKey);
+      case "api-key":
+        return this.buildApiKeyHeaders(apiKey);
+      case "hmac":
+        return this.buildHmacAuthHeaders(apiKey, url, method, body);
+      default:
+        return {};
+    }
+  }
+
+  private buildBearerAuthHeaders(apiKey: string): Record<string, string> {
+    return { Authorization: `Bearer ${apiKey}` };
+  }
+
+  private buildApiKeyHeaders(apiKey: string): Record<string, string> {
+    return { [this.options.apiKeyHeader]: apiKey };
+  }
+
+  private buildHmacAuthHeaders(
+    apiKey: string,
+    url: URL,
+    method: string,
+    body?: string,
+  ): Record<string, string> {
+    const apiSecret = this.options.apiSecret;
+    if (!apiSecret) {
+      return {};
+    }
+
+    const timestamp = new Date().toISOString();
+    const path = url.pathname;
+    const queryString = url.search;
+    const signingBody = body ?? "";
+    const message = `${timestamp}${method.toUpperCase()}${path}${queryString}${signingBody}`;
+    const signature = crypto.createHmac("sha256", apiSecret).update(message).digest("base64");
+
+    const headers: Record<string, string> = {
+      "OK-ACCESS-KEY": apiKey,
+      "OK-ACCESS-SIGN": signature,
+      "OK-ACCESS-TIMESTAMP": timestamp,
+    };
+    if (this.options.passphrase) {
+      headers["OK-ACCESS-PASSPHRASE"] = this.options.passphrase;
+    }
     return headers;
   }
 
