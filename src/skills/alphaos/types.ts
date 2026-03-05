@@ -249,6 +249,7 @@ export interface OnchainIntegrationStatus {
   requireSimulate: boolean;
   tokenProfilePath: string;
   chainIndex: string;
+  lastSubmitChannel?: "public" | "private-rpc" | "private-relay";
   lastError?: string;
   lastErrorAt?: string;
   lastV6SuccessAt?: string;

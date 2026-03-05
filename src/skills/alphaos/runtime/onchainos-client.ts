@@ -16,6 +16,12 @@ import type {
 import { StateStore } from "./state-store";
 
 type AuthMode = "bearer" | "api-key" | "hmac";
+type SubmitChannel = "public" | "private-rpc" | "private-relay";
+type BroadcastBundleTx = {
+  txData?: string;
+  to?: string;
+  value?: string;
+};
 
 type QuoteWire = {
   fromTokenAmount?: string;
@@ -29,7 +35,9 @@ type QuoteWire = {
   }>;
 };
 
-interface OnchainClientOptions {
+const DEFAULT_QUOTE_STALE_MS = 1000;
+
+export interface OnchainOsClientOptions {
   apiBase?: string;
   apiKey?: string;
   apiSecret?: string;
@@ -43,6 +51,10 @@ interface OnchainClientOptions {
   enableCompatFallback: boolean;
   tokenCacheTtlSeconds: number;
   tokenProfilePath: string;
+  privateRpcUrl?: string;
+  relayUrl?: string;
+  usePrivateSubmit?: boolean;
+  quoteStaleMs?: number;
   store?: StateStore;
 }
 
@@ -101,8 +113,10 @@ const LEGACY_PATHS = {
 
 export class OnchainOsClient {
   private diagnostics: OnchainIntegrationStatus;
+  private readonly quoteStaleMs: number;
 
-  constructor(private readonly options: OnchainClientOptions) {
+  constructor(private readonly options: OnchainOsClientOptions) {
+    this.quoteStaleMs = Math.max(1, Math.floor(options.quoteStaleMs ?? DEFAULT_QUOTE_STALE_MS));
     this.diagnostics = {
       authMode: options.authMode,
       v6Preferred: true,
@@ -305,8 +319,8 @@ export class OnchainOsClient {
     const baseToken = await this.resolveToken(pair, "base", this.options.chainIndex);
     const amount = String(Math.max(1, Math.floor(100 * 10 ** Math.min(quoteToken.decimals, 6))));
 
-    const quotes: Quote[] = [];
-    for (const dex of dexes) {
+    const quoteJobs = dexes.map(async (dex): Promise<Quote | null> => {
+      const startedAt = Date.now();
       try {
         const quote = await this.getQuoteV6({
           chainIndex: this.options.chainIndex,
@@ -315,24 +329,30 @@ export class OnchainOsClient {
           amount,
           dexIds: dex,
         });
+        const receivedAt = Date.now();
+        if (receivedAt - startedAt > this.quoteStaleMs) {
+          return null;
+        }
 
         const from = toNumber(quote.fromTokenAmount, 1);
         const to = toNumber(quote.toTokenAmount, 1);
         const basePrice = from > 0 && to > 0 ? from / to : 0;
         const midpoint = basePrice > 0 ? basePrice : 3000;
         const halfSpread = midpoint * 0.00085;
-        quotes.push({
+        return {
           pair,
           dex,
           bid: Number((midpoint - halfSpread).toFixed(6)),
           ask: Number((midpoint + halfSpread).toFixed(6)),
           gasUsd: Math.max(0.5, toNumber(quote.estimateGasFee, this.options.gasUsdDefault)),
-          ts: new Date().toISOString(),
-        });
+          ts: new Date(receivedAt).toISOString(),
+        };
       } catch (error) {
         this.recordError(error);
+        return null;
       }
-    }
+    });
+    const quotes = (await Promise.all(quoteJobs)).filter((quote): quote is Quote => quote !== null);
 
     if (quotes.length === 0) {
       return this.getMockQuotes(pair, dexes);
@@ -346,7 +366,7 @@ export class OnchainOsClient {
     }
 
     try {
-      return await this.executeDualLeg(plan);
+      return await this.executeAtomicDualLeg(plan);
     } catch (error) {
       this.recordError(error);
       const apiError = error as OnchainApiError;
@@ -382,15 +402,117 @@ export class OnchainOsClient {
     }
   }
 
-  async executeDualLeg(plan: ExecutionPlan): Promise<TradeResult> {
+  async executeAtomicDualLeg(plan: ExecutionPlan): Promise<TradeResult> {
     const startedAt = Date.now();
     const quoteToken = await this.resolveToken(plan.pair, "quote", this.options.chainIndex);
     const baseToken = await this.resolveToken(plan.pair, "base", this.options.chainIndex);
     const buyAmountRaw = Math.max(1, Math.floor(plan.notionalUsd * 10 ** Math.min(quoteToken.decimals, 6)));
-    const userWalletAddress =
-      typeof plan.metadata?.userWalletAddress === "string" && plan.metadata.userWalletAddress
-        ? plan.metadata.userWalletAddress
-        : "0x1111111111111111111111111111111111111111";
+    const userWalletAddress = this.pickUserWalletAddress(plan);
+
+    const buyQuote = await this.getQuoteV6({
+      chainIndex: this.options.chainIndex,
+      fromTokenAddress: quoteToken.address,
+      toTokenAddress: baseToken.address,
+      amount: String(buyAmountRaw),
+      dexIds: plan.buyDex,
+    });
+    this.assertRouteConstraint(buyQuote, plan.buyDex, "buy");
+    const buySwap = await this.buildSwapV6({
+      chainIndex: this.options.chainIndex,
+      fromTokenAddress: quoteToken.address,
+      toTokenAddress: baseToken.address,
+      amount: String(buyAmountRaw),
+      dexIds: plan.buyDex,
+      userWalletAddress,
+      slippage: "0.5",
+    });
+
+    const sellAmount = Math.max(1, Math.floor(toNumber(buyQuote.toTokenAmount, 0)));
+    if (!Number.isFinite(sellAmount) || sellAmount <= 0) {
+      throw new OnchainApiError("buy leg returned invalid toTokenAmount", 422, "SELL_AMOUNT_INVALID");
+    }
+
+    const sellQuote = await this.getQuoteV6({
+      chainIndex: this.options.chainIndex,
+      fromTokenAddress: baseToken.address,
+      toTokenAddress: quoteToken.address,
+      amount: String(sellAmount),
+      dexIds: plan.sellDex,
+    });
+    this.assertRouteConstraint(sellQuote, plan.sellDex, "sell");
+    const sellSwap = await this.buildSwapV6({
+      chainIndex: this.options.chainIndex,
+      fromTokenAddress: baseToken.address,
+      toTokenAddress: quoteToken.address,
+      amount: String(sellAmount),
+      dexIds: plan.sellDex,
+      userWalletAddress,
+      slippage: "0.5",
+    });
+
+    if (this.options.requireSimulate) {
+      const [buySimulate, sellSimulate] = await Promise.all([
+        this.simulateV6({
+          chainIndex: this.options.chainIndex,
+          txData: buySwap.txData,
+          to: buySwap.to,
+          value: buySwap.value,
+          userWalletAddress,
+        }),
+        this.simulateV6({
+          chainIndex: this.options.chainIndex,
+          txData: sellSwap.txData,
+          to: sellSwap.to,
+          value: sellSwap.value,
+          userWalletAddress,
+        }),
+      ]);
+      if (!buySimulate.success || !sellSimulate.success) {
+        throw new OnchainApiError(
+          buySimulate.message ?? sellSimulate.message ?? "atomic dual-leg simulate failed",
+          400,
+          "SIMULATE_FAILED",
+        );
+      }
+    }
+
+    try {
+      const atomicBroadcast = await this.broadcastV6({
+        chainIndex: this.options.chainIndex,
+        userWalletAddress,
+        bundleTxs: [
+          { txData: buySwap.txData, to: buySwap.to, value: buySwap.value },
+          { txData: sellSwap.txData, to: sellSwap.to, value: sellSwap.value },
+        ],
+      });
+      await this.getHistoryV6(atomicBroadcast.txHash);
+
+      const grossUsd = this.estimateGrossFromQuotes(quoteToken.decimals, buyQuote, sellQuote);
+      const feeUsd = this.estimateFeeFromQuotes(plan.notionalUsd, buyQuote, sellQuote);
+      const netUsd = grossUsd - feeUsd;
+      return {
+        success: true,
+        txHash: atomicBroadcast.txHash,
+        status: "confirmed",
+        grossUsd,
+        feeUsd,
+        netUsd,
+        latencyMs: Date.now() - startedAt,
+      };
+    } catch (error) {
+      if (!this.shouldFallbackToSerialDualLeg(error)) {
+        throw error;
+      }
+      this.options.store?.insertAlert("warn", "atomic_dual_leg_fallback", `atomic fallback to serial: ${String(error)}`);
+      return this.executeDualLeg(plan, startedAt);
+    }
+  }
+
+  async executeDualLeg(plan: ExecutionPlan, startedAt = Date.now()): Promise<TradeResult> {
+    const quoteToken = await this.resolveToken(plan.pair, "quote", this.options.chainIndex);
+    const baseToken = await this.resolveToken(plan.pair, "base", this.options.chainIndex);
+    const buyAmountRaw = Math.max(1, Math.floor(plan.notionalUsd * 10 ** Math.min(quoteToken.decimals, 6)));
+    const userWalletAddress = this.pickUserWalletAddress(plan);
 
     const buyLeg = await this.executeLeg({
       chainIndex: this.options.chainIndex,
@@ -427,7 +549,7 @@ export class OnchainOsClient {
         fromTokenAddress: baseToken.address,
         toTokenAddress: quoteToken.address,
         amount: String(sellAmount),
-        dexId: plan.buyDex,
+        dexIds: [plan.sellDex, plan.buyDex],
         userWalletAddress,
       });
       const partialMessage = `buy leg ok tx=${buyLeg.broadcast.txHash}; sell leg failed on ${plan.sellDex}; hedge=${hedge}`;
@@ -511,18 +633,44 @@ export class OnchainOsClient {
     fromTokenAddress: string;
     toTokenAddress: string;
     amount: string;
-    dexId: string;
+    dexIds: string[];
     userWalletAddress: string;
   }): Promise<string> {
-    try {
-      const hedgeLeg = await this.executeLeg({
-        ...input,
-        leg: "hedge",
-      });
-      return `submitted:${hedgeLeg.broadcast.txHash}`;
-    } catch (error) {
-      return `failed:${String(error)}`;
+    const dedupedDexes = Array.from(new Set(input.dexIds.filter(Boolean)));
+    let lastError: unknown;
+    for (const dexId of dedupedDexes) {
+      try {
+        const hedgeLeg = await this.executeLeg({
+          chainIndex: input.chainIndex,
+          fromTokenAddress: input.fromTokenAddress,
+          toTokenAddress: input.toTokenAddress,
+          amount: input.amount,
+          dexId,
+          userWalletAddress: input.userWalletAddress,
+          leg: "hedge",
+        });
+        return `submitted:${hedgeLeg.broadcast.txHash};dex=${dexId}`;
+      } catch (error) {
+        lastError = error;
+      }
     }
+    return `failed:${String(lastError)}`;
+  }
+
+  private pickUserWalletAddress(plan: ExecutionPlan): string {
+    return typeof plan.metadata?.userWalletAddress === "string" && plan.metadata.userWalletAddress
+      ? plan.metadata.userWalletAddress
+      : "0x1111111111111111111111111111111111111111";
+  }
+
+  private shouldFallbackToSerialDualLeg(error: unknown): boolean {
+    const apiError = error as OnchainApiError;
+    const status = apiError instanceof OnchainApiError ? apiError.status : undefined;
+    if (status !== undefined && [404, 405, 501].includes(status)) {
+      return true;
+    }
+    const text = String(error).toLowerCase();
+    return text.includes("bundle") && (text.includes("unsupported") || text.includes("not found"));
   }
 
   private assertRouteConstraint(quote: OnchainV6QuoteResponse, expectedDex: string, leg: "buy" | "sell" | "hedge") {
@@ -633,30 +781,31 @@ export class OnchainOsClient {
     to?: string;
     value?: string;
     userWalletAddress: string;
+    bundleTxs?: BroadcastBundleTx[];
   }): Promise<OnchainV6BroadcastResponse> {
-    const payload = await this.requestWithFallback<Record<string, unknown>>({
+    const body = this.buildBroadcastBody(input);
+    const privateChannel = this.pickPrivateChannel();
+    if (privateChannel) {
+      try {
+        const privatePayload = await this.requestDirect<Record<string, unknown>>({
+          endpoint: privateChannel.endpoint,
+          method: "POST",
+          body,
+        });
+        return this.toBroadcastResponse(privatePayload, privateChannel.channel);
+      } catch (error) {
+        this.recordError(error);
+        this.options.store?.insertAlert("warn", "private_submit_failed", String(error));
+      }
+    }
+
+    const publicPayload = await this.requestWithFallback<Record<string, unknown>>({
       primary: V6_PATHS.broadcast,
       fallback: LEGACY_PATHS.broadcast,
       method: "POST",
-      body: {
-        chainIndex: input.chainIndex,
-        txData: input.txData,
-        to: input.to,
-        value: input.value,
-        userWalletAddress: input.userWalletAddress,
-      },
+      body,
     });
-
-    const txHash = this.pickString(payload, ["txHash", "hash", "transactionHash"]);
-    if (!txHash) {
-      throw new OnchainApiError("broadcast response missing txHash", 422, "BROADCAST_PAYLOAD_INVALID");
-    }
-
-    return {
-      txHash,
-      status: this.pickString(payload, ["status", "txStatus"]),
-      raw: payload,
-    };
+    return this.toBroadcastResponse(publicPayload, "public");
   }
 
   async getHistoryV6(txHash: string): Promise<Record<string, unknown> | null> {
@@ -675,6 +824,75 @@ export class OnchainOsClient {
       this.recordError(error);
       return null;
     }
+  }
+
+  private buildBroadcastBody(input: {
+    chainIndex: string;
+    txData?: string;
+    to?: string;
+    value?: string;
+    userWalletAddress: string;
+    bundleTxs?: BroadcastBundleTx[];
+  }): Record<string, unknown> {
+    const bundleTxs = Array.isArray(input.bundleTxs) ? input.bundleTxs : [];
+    const hasBundle = bundleTxs.length > 0;
+    return {
+      chainIndex: input.chainIndex,
+      txData: input.txData,
+      to: input.to,
+      value: input.value,
+      userWalletAddress: input.userWalletAddress,
+      ...(hasBundle
+        ? {
+            bundleTxs,
+            transactions: bundleTxs,
+            txDataList: bundleTxs.map((tx) => tx.txData).filter((tx): tx is string => Boolean(tx)),
+            atomic: true,
+          }
+        : {}),
+    };
+  }
+
+  private pickPrivateChannel():
+    | {
+        channel: SubmitChannel;
+        endpoint: string;
+      }
+    | undefined {
+    if (!this.options.usePrivateSubmit) {
+      return undefined;
+    }
+    if (this.options.relayUrl) {
+      return {
+        channel: "private-relay",
+        endpoint: this.options.relayUrl,
+      };
+    }
+    if (this.options.privateRpcUrl) {
+      return {
+        channel: "private-rpc",
+        endpoint: this.options.privateRpcUrl,
+      };
+    }
+    return undefined;
+  }
+
+  private toBroadcastResponse(payload: Record<string, unknown>, channel: SubmitChannel): OnchainV6BroadcastResponse {
+    const txHash = this.pickString(payload, ["txHash", "hash", "transactionHash"]);
+    if (!txHash) {
+      throw new OnchainApiError("broadcast response missing txHash", 422, "BROADCAST_PAYLOAD_INVALID");
+    }
+    this.recordSubmitChannel(channel);
+    return {
+      txHash,
+      status: this.pickString(payload, ["status", "txStatus"]),
+      raw: payload,
+    };
+  }
+
+  private recordSubmitChannel(channel: SubmitChannel): void {
+    this.diagnostics.lastSubmitChannel = channel;
+    this.options.store?.insertAlert("info", "submit_channel", `submit channel=${channel}`);
   }
 
   private async fetchTokenProfile(symbol: string, chainIndex: string): Promise<{ address: string; decimals: number }> {
@@ -871,6 +1089,41 @@ export class OnchainOsClient {
       }
     }
     return url;
+  }
+
+  private async requestDirect<T>(params: {
+    endpoint: string;
+    method: "GET" | "POST";
+    query?: Record<string, string>;
+    body?: Record<string, unknown>;
+  }): Promise<T> {
+    const url = new URL(params.endpoint);
+    if (params.query) {
+      for (const [k, v] of Object.entries(params.query)) {
+        url.searchParams.set(k, v);
+      }
+    }
+    const bodyText = params.body ? JSON.stringify(params.body) : undefined;
+    const headers: Record<string, string> = {
+      ...(bodyText ? { "Content-Type": "application/json" } : {}),
+      ...this.buildAuthHeaders(url, params.method, bodyText),
+    };
+    const response = await fetch(url, {
+      method: params.method,
+      headers,
+      ...(bodyText ? { body: bodyText } : {}),
+    });
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new OnchainApiError(
+        `request failed ${response.status} ${url.pathname}: ${responseText.slice(0, 280)}`,
+        response.status,
+        this.extractErrorCode(responseText),
+        url.pathname,
+      );
+    }
+    const raw = (await response.json()) as unknown;
+    return this.pickPayload(raw) as T;
   }
 
   private async requestWithFallback<T>(params: {

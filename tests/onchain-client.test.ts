@@ -242,14 +242,13 @@ describe("OnchainOsClient v6 integration", () => {
     expect(mockFetch).toHaveBeenCalledTimes(5);
   });
 
-  it("executes dual-leg with buy/sell dex constraints and no hardcoded profit bias", async () => {
+  it("executes atomic dual-leg with buy/sell dex constraints", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-dual-leg-"));
     tempDirs.push(tempDir);
     const store = new StateStore(tempDir);
     stores.push(store);
 
-    let broadcastCount = 0;
-    const mockFetch = vi.fn(async (input: URL | RequestInfo) => {
+    const mockFetch = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
       const url = new URL(String(input));
       const pathname = url.pathname;
       const from = url.searchParams.get("fromTokenAddress");
@@ -303,8 +302,10 @@ describe("OnchainOsClient v6 integration", () => {
         return jsonResponse({ data: [{ success: true }] });
       }
       if (pathname.includes("/broadcast-transaction")) {
-        broadcastCount += 1;
-        return jsonResponse({ data: [{ txHash: `0xtx-${broadcastCount}` }] });
+        const body = JSON.parse(String(init?.body ?? "{}")) as { bundleTxs?: Array<{ txData?: string }> };
+        expect(Array.isArray(body.bundleTxs)).toBe(true);
+        expect(body.bundleTxs?.length).toBe(2);
+        return jsonResponse({ data: [{ txHash: "0xatomic-tx-1" }] });
       }
       if (pathname.includes("/aggregator/history")) {
         return jsonResponse({ data: [{ status: "confirmed" }] });
@@ -341,8 +342,8 @@ describe("OnchainOsClient v6 integration", () => {
     expect(result.success).toBe(true);
     expect(result.grossUsd).toBe(0);
     expect(result.netUsd).toBe(0);
-    expect(result.txHash).toContain("0xtx-1");
-    expect(result.txHash).toContain("0xtx-2");
+    expect(result.txHash).toBe("0xatomic-tx-1");
+    expect(result.latencyMs).toBeTypeOf("number");
   });
 
   it("fails when quote route does not match constrained dex", async () => {
@@ -404,7 +405,99 @@ describe("OnchainOsClient v6 integration", () => {
     expect(result.errorType).toBe("validation");
   });
 
-  it("records alert and hedges when first leg succeeds but second leg fails", async () => {
+  it("fetches quotes concurrently and drops stale quotes", async () => {
+    const quoteStartedAt: Record<string, number> = {};
+    const mockFetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.includes("/market/token/profile/current")) {
+        const symbol = url.searchParams.get("tokenSymbol");
+        if (symbol === "USDC") {
+          return jsonResponse({ data: [{ tokenContractAddress: "0xusdc", tokenDecimal: "6" }] });
+        }
+        return jsonResponse({ data: [{ tokenContractAddress: "0xeth", tokenDecimal: "18" }] });
+      }
+      if (url.pathname.includes("/aggregator/quote")) {
+        const dexIds = String(url.searchParams.get("dexIds") ?? "");
+        quoteStartedAt[dexIds] = Date.now();
+        if (dexIds === "dex-a") {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        return jsonResponse({
+          data: [{ fromTokenAmount: "100000000", toTokenAmount: "50000000000000000", dexRouterList: [{ dexName: dexIds }] }],
+        });
+      }
+      return jsonResponse({ code: "404" }, 404);
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const client = new OnchainOsClient({
+      apiBase: "http://localhost:9999",
+      apiKey: "k1",
+      authMode: "bearer",
+      apiKeyHeader: "X-API-Key",
+      gasUsdDefault: 1,
+      chainIndex: "196",
+      requireSimulate: true,
+      enableCompatFallback: false,
+      tokenCacheTtlSeconds: 600,
+      tokenProfilePath: "/api/v6/market/token/profile/current",
+      quoteStaleMs: 30,
+    });
+
+    const quotes = await client.getQuotes("ETH/USDC", ["dex-a", "dex-b"]);
+
+    expect(Math.abs(quoteStartedAt["dex-a"] - quoteStartedAt["dex-b"])).toBeLessThan(30);
+    expect(quotes).toHaveLength(1);
+    expect(quotes[0]?.dex).toBe("dex-b");
+    expect(quotes[0]?.ts).toBeTruthy();
+  });
+
+  it("prefers private relay submission when configured", async () => {
+    let publicSubmitCount = 0;
+    const mockFetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.hostname === "relay.local") {
+        return jsonResponse({ data: [{ txHash: "0xrelay-tx", status: "submitted" }] });
+      }
+      if (url.pathname.includes("/broadcast-transaction")) {
+        publicSubmitCount += 1;
+        return jsonResponse({ data: [{ txHash: "0xpublic-tx" }] });
+      }
+      return jsonResponse({ code: "404" }, 404);
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const client = new OnchainOsClient({
+      apiBase: "http://localhost:9999",
+      apiKey: "k1",
+      authMode: "bearer",
+      apiKeyHeader: "X-API-Key",
+      gasUsdDefault: 1,
+      chainIndex: "196",
+      requireSimulate: true,
+      enableCompatFallback: false,
+      tokenCacheTtlSeconds: 600,
+      tokenProfilePath: "/api/v6/market/token/profile/current",
+      usePrivateSubmit: true,
+      relayUrl: "http://relay.local/submit",
+    });
+
+    const result = await client.broadcastV6({
+      chainIndex: "196",
+      txData: "0xabc",
+      to: "0xrouter",
+      value: "0",
+      userWalletAddress: "0x1111111111111111111111111111111111111111",
+    });
+
+    expect(result.txHash).toBe("0xrelay-tx");
+    expect(publicSubmitCount).toBe(0);
+    expect(client.getIntegrationStatus().lastSubmitChannel).toBe("private-relay");
+  });
+
+  it("falls back to serial + hedge when atomic bundle submit is unavailable", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-partial-"));
     tempDirs.push(tempDir);
     const store = new StateStore(tempDir);
@@ -413,7 +506,7 @@ describe("OnchainOsClient v6 integration", () => {
     let quoteCount = 0;
     let swapCount = 0;
     let broadcastCount = 0;
-    const mockFetch = vi.fn(async (input: URL | RequestInfo) => {
+    const mockFetch = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
       const url = new URL(String(input));
       const pathName = url.pathname;
       const symbol = url.searchParams.get("tokenSymbol");
@@ -427,13 +520,13 @@ describe("OnchainOsClient v6 integration", () => {
       }
       if (pathName.includes("/aggregator/quote")) {
         quoteCount += 1;
-        if (quoteCount === 1) {
+        if (quoteCount === 1 || quoteCount === 3) {
           expect(dexIds).toBe("dex-a");
           return jsonResponse({
             data: [{ fromTokenAmount: "1000000", toTokenAmount: "2000000000000000", dexRouterList: [{ dexName: "dex-a" }] }],
           });
         }
-        if (quoteCount === 2) {
+        if (quoteCount === 2 || quoteCount === 4 || quoteCount === 5) {
           expect(dexIds).toBe("dex-b");
           return jsonResponse({
             data: [{ fromTokenAmount: "2000000000000000", toTokenAmount: "999000", dexRouterList: [{ dexName: "dex-b" }] }],
@@ -446,7 +539,7 @@ describe("OnchainOsClient v6 integration", () => {
       }
       if (pathName.includes("/aggregator/swap")) {
         swapCount += 1;
-        if (swapCount === 2) {
+        if (swapCount === 4) {
           return jsonResponse({ code: "FAIL", msg: "sell failed" }, 500);
         }
         return jsonResponse({ data: [{ txData: `0xswap-${swapCount}`, to: "0xrouter", value: "0" }] });
@@ -455,6 +548,10 @@ describe("OnchainOsClient v6 integration", () => {
         return jsonResponse({ data: [{ success: true }] });
       }
       if (pathName.includes("/broadcast-transaction")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { bundleTxs?: Array<{ txData?: string }> };
+        if (Array.isArray(body.bundleTxs) && body.bundleTxs.length === 2) {
+          return jsonResponse({ code: "NOT_SUPPORTED", msg: "bundle unsupported" }, 404);
+        }
         broadcastCount += 1;
         return jsonResponse({ data: [{ txHash: `0xhedge-${broadcastCount}` }] });
       }
@@ -472,7 +569,7 @@ describe("OnchainOsClient v6 integration", () => {
       apiKeyHeader: "X-API-Key",
       gasUsdDefault: 1,
       chainIndex: "196",
-      requireSimulate: true,
+      requireSimulate: false,
       enableCompatFallback: false,
       tokenCacheTtlSeconds: 600,
       tokenProfilePath: "/api/v6/market/token/profile/current",
@@ -493,6 +590,7 @@ describe("OnchainOsClient v6 integration", () => {
     const alerts = store.listAlerts(5);
     expect(result.success).toBe(false);
     expect(result.errorType).toBe("validation");
+    expect(alerts.some((alert) => alert.eventType === "atomic_dual_leg_fallback")).toBe(true);
     expect(alerts.some((alert) => alert.eventType === "dual_leg_partial_fill")).toBe(true);
     expect(alerts.some((alert) => alert.message.includes("hedge=submitted"))).toBe(true);
   });

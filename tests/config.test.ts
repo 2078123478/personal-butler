@@ -25,4 +25,15 @@ describe("loadConfig security defaults", () => {
     expect(config.apiSecret).toBe("example-secret");
     expect(config.demoPublic).toBe(true);
   });
+
+  it("reads private submit configuration from env", () => {
+    process.env.ONCHAINOS_PRIVATE_RPC_URL = "https://private-rpc.example";
+    process.env.ONCHAINOS_RELAY_URL = "https://relay.example";
+    process.env.ONCHAINOS_USE_PRIVATE_SUBMIT = "true";
+
+    const config = loadConfig();
+    expect(config.onchainPrivateRpcUrl).toBe("https://private-rpc.example");
+    expect(config.onchainRelayUrl).toBe("https://relay.example");
+    expect(config.onchainUsePrivateSubmit).toBe(true);
+  });
 });

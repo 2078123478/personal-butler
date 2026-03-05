@@ -75,6 +75,9 @@ export function createAlphaOsSkill(config: AlphaOsConfig, logger: Logger) {
     enableCompatFallback: config.onchainEnableCompatFallback,
     tokenCacheTtlSeconds: config.onchainTokenCacheTtlSeconds,
     tokenProfilePath: config.onchainTokenProfilePath,
+    privateRpcUrl: config.onchainPrivateRpcUrl,
+    relayUrl: config.onchainRelayUrl,
+    usePrivateSubmit: config.onchainUsePrivateSubmit,
     store,
   });
 

@@ -90,6 +90,9 @@ export interface AlphaOsConfig {
   onchainEnableCompatFallback: boolean;
   onchainTokenCacheTtlSeconds: number;
   onchainTokenProfilePath: string;
+  onchainPrivateRpcUrl?: string;
+  onchainRelayUrl?: string;
+  onchainUsePrivateSubmit: boolean;
   openClawHookUrl?: string;
   openClawHookToken?: string;
   dataDir: string;
@@ -129,6 +132,9 @@ export function loadConfig(): AlphaOsConfig {
     onchainTokenCacheTtlSeconds: readNumber("ONCHAINOS_TOKEN_CACHE_TTL_SECONDS", 600),
     onchainTokenProfilePath:
       process.env.ONCHAINOS_TOKEN_PROFILE_PATH ?? "/api/v6/market/token/profile/current",
+    onchainPrivateRpcUrl: process.env.ONCHAINOS_PRIVATE_RPC_URL,
+    onchainRelayUrl: process.env.ONCHAINOS_RELAY_URL,
+    onchainUsePrivateSubmit: readBoolean("ONCHAINOS_USE_PRIVATE_SUBMIT", false),
     openClawHookUrl: process.env.OPENCLAW_HOOK_URL,
     openClawHookToken: process.env.OPENCLAW_HOOK_TOKEN,
     dataDir: process.env.DATA_DIR ?? "data",
