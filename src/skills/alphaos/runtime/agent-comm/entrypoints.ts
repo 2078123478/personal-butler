@@ -416,7 +416,7 @@ export function registerTrustedPeerEntry(
   deps: Pick<AgentCommEntrypointDependencies, "store">,
   options: RegisterTrustedPeerOptions,
 ): AgentPeer {
-  return registerPeer(deps.store, {
+  const peer = registerPeer(deps.store, {
     peerId: options.peerId,
     walletAddress: options.walletAddress,
     pubkey: options.pubkey,
@@ -425,6 +425,8 @@ export function registerTrustedPeerEntry(
     capabilities: options.capabilities ?? DEFAULT_TRUSTED_PEER_CAPABILITIES,
     metadata: options.metadata,
   });
+  deps.store.backfillAgentContactFromLegacyPeer(peer.peerId);
+  return peer;
 }
 
 export function listLocalIdentityProfiles(

@@ -407,6 +407,165 @@ describe("StateStore P0 safety", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("persists contact-oriented v2 records and resolves by contact, identity, legacy peer, and active receive address", () => {
+    const { dir, store } = createStore("alphaos-state-");
+
+    const contact = store.upsertAgentContact({
+      contactId: "ct-test-1",
+      identityWallet: "0x2222222222222222222222222222222222222222",
+      legacyPeerId: "peer-legacy-1",
+      displayName: "Peer Contact",
+      status: "trusted",
+      supportedProtocols: ["agent-comm/2", "agent-comm/1"],
+      capabilityProfile: "research-collab",
+      capabilities: ["ping", "start_discovery"],
+      metadata: { source: "unit-test" },
+    });
+    expect(store.getAgentContact(contact.contactId)?.identityWallet).toBe(contact.identityWallet);
+    expect(store.getAgentContactByIdentityWallet(contact.identityWallet)?.contactId).toBe(contact.contactId);
+    expect(store.getAgentContactByLegacyPeerId("peer-legacy-1")?.contactId).toBe(contact.contactId);
+
+    const endpoint = store.upsertAgentTransportEndpoint({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      chainId: 8453,
+      receiveAddress: "0x3333333333333333333333333333333333333333",
+      pubkey: "pubkey-transport-1",
+      keyId: "rk_contact_1",
+      endpointStatus: "active",
+      source: "unit-test",
+      metadata: { active: true },
+    });
+    expect(endpoint.endpointStatus).toBe("active");
+    expect(
+      store.getAgentContactByActiveReceiveAddress("0x3333333333333333333333333333333333333333")
+        ?.contactId,
+    ).toBe(contact.contactId);
+
+    const event = store.upsertAgentConnectionEvent({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      direction: "inbound",
+      eventType: "connection_invite",
+      eventStatus: "pending",
+      messageId: "msg-invite-1",
+      txHash: "0xinvite1",
+      occurredAt: "2026-03-07T00:00:00.000Z",
+    });
+    const eventUpdated = store.upsertAgentConnectionEvent({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      direction: "inbound",
+      eventType: "connection_invite",
+      eventStatus: "applied",
+      messageId: "msg-invite-1",
+      txHash: "0xinvite1",
+      reason: "accepted",
+      occurredAt: "2026-03-07T00:01:00.000Z",
+    });
+    expect(eventUpdated.id).toBe(event.id);
+    expect(store.listAgentConnectionEvents(10, { contactId: contact.contactId })).toHaveLength(1);
+    expect(store.getAgentConnectionEvent(event.id)?.eventStatus).toBe("applied");
+
+    const digest = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    store.upsertAgentArtifactStatus({
+      artifactDigest: digest,
+      artifactType: "TransportBinding",
+      identityWallet: contact.identityWallet,
+      status: "active",
+    });
+    const revoked = store.upsertAgentArtifactStatus({
+      artifactDigest: digest,
+      artifactType: "TransportBinding",
+      identityWallet: contact.identityWallet,
+      status: "revoked",
+      revokedByDigest: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      revokedAt: 1741348800,
+      reason: "key rotation",
+    });
+    expect(revoked.status).toBe("revoked");
+    expect(store.listAgentArtifactStatuses(10, { status: "revoked" })).toHaveLength(1);
+
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("idempotently backfills legacy agent_peers into contact-oriented storage", () => {
+    const { dir, store } = createStore("alphaos-state-");
+
+    store.upsertAgentPeer({
+      peerId: "legacy-peer-1",
+      walletAddress: "0x4444444444444444444444444444444444444444",
+      pubkey: "legacy-pubkey-1",
+      status: "trusted",
+      capabilities: ["ping"],
+    });
+    store.upsertAgentPeer({
+      peerId: "legacy-peer-2",
+      walletAddress: "0x5555555555555555555555555555555555555555",
+      pubkey: "legacy-pubkey-2",
+      status: "blocked",
+      capabilities: ["start_discovery"],
+    });
+
+    const first = store.backfillAgentContactsFromLegacyPeers({ chainId: 8453 });
+    expect(first).toEqual({
+      processedPeers: 2,
+      createdContacts: 2,
+      updatedContacts: 0,
+      createdTransportEndpoints: 2,
+      updatedTransportEndpoints: 0,
+    });
+
+    expect(store.listAgentContacts(10)).toHaveLength(2);
+    expect(store.listAgentTransportEndpoints(10)).toHaveLength(2);
+    expect(store.getAgentContactByLegacyPeerId("legacy-peer-1")?.status).toBe("trusted");
+    expect(store.getAgentContactByLegacyPeerId("legacy-peer-2")?.status).toBe("blocked");
+    expect(
+      store.getAgentContactByActiveReceiveAddress("0x4444444444444444444444444444444444444444")
+        ?.legacyPeerId,
+    ).toBe("legacy-peer-1");
+    expect(store.getAgentContactByActiveReceiveAddress("0x5555555555555555555555555555555555555555")).toBe(
+      null,
+    );
+
+    const second = store.backfillAgentContactsFromLegacyPeers({ chainId: 8453 });
+    expect(second).toEqual({
+      processedPeers: 2,
+      createdContacts: 0,
+      updatedContacts: 2,
+      createdTransportEndpoints: 0,
+      updatedTransportEndpoints: 2,
+    });
+    expect(store.listAgentContacts(10)).toHaveLength(2);
+    expect(store.listAgentTransportEndpoints(10)).toHaveLength(2);
+
+    store.upsertAgentPeer({
+      peerId: "legacy-peer-1",
+      walletAddress: "0x4444444444444444444444444444444444444444",
+      pubkey: "legacy-pubkey-1",
+      status: "revoked",
+      capabilities: ["ping"],
+    });
+    const single = store.backfillAgentContactFromLegacyPeer("legacy-peer-1", { chainId: 8453 });
+    expect(single).toEqual({
+      processedPeers: 1,
+      createdContacts: 0,
+      updatedContacts: 1,
+      createdTransportEndpoints: 0,
+      updatedTransportEndpoints: 1,
+    });
+    expect(store.getAgentContactByLegacyPeerId("legacy-peer-1")?.status).toBe("revoked");
+    expect(
+      store
+        .listAgentTransportEndpoints(10, { contactId: store.getAgentContactByLegacyPeerId("legacy-peer-1")!.contactId })
+        .map((item) => item.endpointStatus),
+    ).toContain("revoked");
+
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("drops obsolete agent comm tables and enforces message uniqueness when opening a legacy db", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-state-legacy-"));
     const legacyDb = new Database(path.join(dir, "alpha.db"));

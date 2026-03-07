@@ -154,7 +154,7 @@ Tasks:
 
 - [x] `[Core]` Extend `StateStore` schema creation to add additive v2 tables with the existing `agent_*` naming style.
 - [x] `[Core]` Add a local identity table for LIW/ACW metadata and active binding tracking.
-- [ ] `[Core]` Add a contact table keyed by internal `contactId` and canonical `identityWallet`.
+- [x] `[Core]` Add a contact table keyed by internal `contactId` and canonical `identityWallet`.
 - [x] `[Core]` Add a signed-artifact table that stores:
   - artifact type
   - digest
@@ -162,9 +162,9 @@ Tasks:
   - validity window
   - raw JSON
   - verification result
-- [ ] `[Core]` Add a transport-endpoint table that stores active and historical receive endpoints per contact.
-- [ ] `[Core]` Add a connection-event table for `connection_invite`, `connection_accept`, `connection_reject`, `connection_confirm`.
-- [ ] `[Core]` Add a revocation table or equivalent artifact status model so older bindings/cards can be marked superseded later.
+- [x] `[Core]` Add a transport-endpoint table that stores active and historical receive endpoints per contact.
+- [x] `[Core]` Add a connection-event table for `connection_invite`, `connection_accept`, `connection_reject`, `connection_confirm`.
+- [x] `[Core]` Add a revocation table or equivalent artifact status model so older bindings/cards can be marked superseded later.
 - [ ] `[Core]` Extend `agent_messages` to carry v2-relevant fields without removing v1 fields:
   - `envelopeVersion`
   - `msgId`
@@ -173,19 +173,19 @@ Tasks:
   - `transportAddress`
   - `trustOutcome`
   - decrypted command type where available
-- [ ] `[Core]` Add indexes for:
+- [x] `[Core]` Add indexes for:
   - `identityWallet`
   - active `receiveAddress`
   - `contactId + status`
   - `msgId`
   - `txHash`
   - pending connection states
-- [ ] `[Core]` Add store APIs that can resolve contacts by:
+- [x] `[Core]` Add store APIs that can resolve contacts by:
   - `contactId`
   - `identityWallet`
   - active receive address
   - legacy `peerId`
-- [ ] `[Core]` Add an idempotent backfill/adapter path from `agent_peers` into the v2 contact model:
+- [x] `[Core]` Add an idempotent backfill/adapter path from `agent_peers` into the v2 contact model:
   - preserve `legacyPeerId`
   - set supported protocols to `agent-comm/1`
   - store existing wallet address/pubkey as legacy transport material

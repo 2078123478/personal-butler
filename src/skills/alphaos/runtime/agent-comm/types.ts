@@ -38,6 +38,23 @@ export const agentLocalIdentityRoles = ["liw", "acw", "temporary_demo"] as const
 export const agentLocalIdentityModes = ["standard", "temporary_dual_use"] as const;
 export const agentSignedArtifactTypes = ["ContactCard", "TransportBinding", "RevocationNotice"] as const;
 export const agentSignedArtifactVerificationStatuses = ["verified", "invalid"] as const;
+export const agentContactStatuses = [
+  "imported",
+  "pending_inbound",
+  "pending_outbound",
+  "trusted",
+  "blocked",
+  "revoked",
+] as const;
+export const agentTransportEndpointStatuses = ["active", "inactive", "revoked"] as const;
+export const agentConnectionEventTypes = [
+  "connection_invite",
+  "connection_accept",
+  "connection_reject",
+  "connection_confirm",
+] as const;
+export const agentConnectionEventStatuses = ["pending", "applied", "rejected", "ignored"] as const;
+export const agentArtifactRevocationStatuses = ["active", "revoked", "superseded"] as const;
 export const commListenerModes = ["disabled", "poll", "ws"] as const;
 export const x402Modes = ["disabled", "observe", "enforce"] as const;
 
@@ -72,6 +89,11 @@ export const agentSignedArtifactTypeSchema = z.enum(agentSignedArtifactTypes);
 export const agentSignedArtifactVerificationStatusSchema = z.enum(
   agentSignedArtifactVerificationStatuses,
 );
+export const agentContactStatusSchema = z.enum(agentContactStatuses);
+export const agentTransportEndpointStatusSchema = z.enum(agentTransportEndpointStatuses);
+export const agentConnectionEventTypeSchema = z.enum(agentConnectionEventTypes);
+export const agentConnectionEventStatusSchema = z.enum(agentConnectionEventStatuses);
+export const agentArtifactRevocationStatusSchema = z.enum(agentArtifactRevocationStatuses);
 export const commListenerModeSchema = z.enum(commListenerModes);
 export const x402ModeSchema = z.enum(x402Modes);
 export const agentPeerCapabilitySchema = agentCommandTypeSchema;
@@ -310,6 +332,74 @@ export const agentSignedArtifactSchema = z
   })
   .strict();
 
+export const agentContactSchema = z
+  .object({
+    contactId: z.string().min(1),
+    identityWallet: z.string().min(1),
+    legacyPeerId: z.string().min(1).optional(),
+    displayName: z.string().min(1).optional(),
+    handle: z.string().min(1).optional(),
+    status: agentContactStatusSchema,
+    supportedProtocols: z.array(z.string().min(1)),
+    capabilityProfile: z.string().min(1).optional(),
+    capabilities: z.array(z.string().min(1)),
+    metadata: jsonObjectSchema.optional(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+
+export const agentTransportEndpointSchema = z
+  .object({
+    id: z.string().min(1),
+    contactId: z.string().min(1),
+    identityWallet: z.string().min(1),
+    chainId: z.number().int().nonnegative(),
+    receiveAddress: z.string().min(1),
+    pubkey: z.string().min(1),
+    keyId: z.string().min(1),
+    bindingDigest: bytes32HexSchema.optional(),
+    endpointStatus: agentTransportEndpointStatusSchema,
+    source: z.string().min(1),
+    metadata: jsonObjectSchema.optional(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+
+export const agentConnectionEventSchema = z
+  .object({
+    id: z.string().min(1),
+    contactId: z.string().min(1),
+    identityWallet: z.string().min(1),
+    direction: agentMessageDirectionSchema,
+    eventType: agentConnectionEventTypeSchema,
+    eventStatus: agentConnectionEventStatusSchema,
+    messageId: z.string().min(1).optional(),
+    txHash: z.string().min(1).optional(),
+    reason: z.string().optional(),
+    metadata: jsonObjectSchema.optional(),
+    occurredAt: z.string().min(1),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+
+export const agentArtifactStatusSchema = z
+  .object({
+    artifactDigest: bytes32HexSchema,
+    artifactType: agentSignedArtifactTypeSchema,
+    identityWallet: z.string().min(1),
+    status: agentArtifactRevocationStatusSchema,
+    revokedByDigest: bytes32HexSchema.optional(),
+    revokedAt: z.number().int().nonnegative().optional(),
+    reason: z.string().optional(),
+    metadata: jsonObjectSchema.optional(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+
 export const x402ReceiptSchema = z
   .object({
     id: z.string().min(1),
@@ -348,6 +438,11 @@ export type AgentSignedArtifactType = z.infer<typeof agentSignedArtifactTypeSche
 export type AgentSignedArtifactVerificationStatus = z.infer<
   typeof agentSignedArtifactVerificationStatusSchema
 >;
+export type AgentContactStatus = z.infer<typeof agentContactStatusSchema>;
+export type AgentTransportEndpointStatus = z.infer<typeof agentTransportEndpointStatusSchema>;
+export type AgentConnectionEventType = z.infer<typeof agentConnectionEventTypeSchema>;
+export type AgentConnectionEventStatus = z.infer<typeof agentConnectionEventStatusSchema>;
+export type AgentArtifactRevocationStatus = z.infer<typeof agentArtifactRevocationStatusSchema>;
 export type CommListenerMode = z.infer<typeof commListenerModeSchema>;
 export type X402Mode = z.infer<typeof x402ModeSchema>;
 
@@ -374,5 +469,9 @@ export type AgentSession = z.infer<typeof agentSessionSchema>;
 export type ListenerCursor = z.infer<typeof listenerCursorSchema>;
 export type AgentLocalIdentity = z.infer<typeof agentLocalIdentitySchema>;
 export type AgentSignedArtifact = z.infer<typeof agentSignedArtifactSchema>;
+export type AgentContact = z.infer<typeof agentContactSchema>;
+export type AgentTransportEndpoint = z.infer<typeof agentTransportEndpointSchema>;
+export type AgentConnectionEvent = z.infer<typeof agentConnectionEventSchema>;
+export type AgentArtifactStatus = z.infer<typeof agentArtifactStatusSchema>;
 export type X402Receipt = z.infer<typeof x402ReceiptSchema>;
 export type AgentCommStatus = z.infer<typeof agentCommStatusSchema>;

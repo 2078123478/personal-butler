@@ -25,15 +25,26 @@ import type {
   TradeResult,
 } from "../types";
 import {
+  agentArtifactStatusSchema,
+  agentConnectionEventSchema,
+  agentContactSchema,
   agentLocalIdentitySchema,
-  agentSignedArtifactSchema,
   agentMessageSchema,
+  agentSignedArtifactSchema,
+  agentTransportEndpointSchema,
   agentPeerCapabilitySchema,
   agentPeerSchema,
   jsonObjectSchema,
 } from "./agent-comm/types";
 import type {
+  AgentArtifactRevocationStatus,
+  AgentArtifactStatus,
   AgentCommandType,
+  AgentConnectionEvent,
+  AgentConnectionEventStatus,
+  AgentConnectionEventType,
+  AgentContact,
+  AgentContactStatus,
   AgentLocalIdentity,
   AgentLocalIdentityMode,
   AgentLocalIdentityRole,
@@ -46,6 +57,8 @@ import type {
   AgentSignedArtifact,
   AgentSignedArtifactType,
   AgentSignedArtifactVerificationStatus,
+  AgentTransportEndpoint,
+  AgentTransportEndpointStatus,
   ListenerCursor,
 } from "./agent-comm/types";
 import { utcDay } from "./time";
@@ -133,6 +146,74 @@ interface AgentSignedArtifactRow {
   source: string;
   createdAt: string;
   updatedAt: string;
+}
+
+interface AgentContactRow {
+  contactId: string;
+  identityWallet: string;
+  legacyPeerId: string | null;
+  displayName: string | null;
+  handle: string | null;
+  status: AgentContactStatus;
+  supportedProtocolsJson: string;
+  capabilityProfile: string | null;
+  capabilitiesJson: string;
+  metadataJson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AgentTransportEndpointRow {
+  id: string;
+  contactId: string;
+  identityWallet: string;
+  chainId: number;
+  receiveAddress: string;
+  pubkey: string;
+  keyId: string;
+  bindingDigest: string | null;
+  endpointStatus: AgentTransportEndpointStatus;
+  source: string;
+  metadataJson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AgentConnectionEventRow {
+  id: string;
+  contactId: string;
+  identityWallet: string;
+  direction: AgentMessageDirection;
+  eventType: AgentConnectionEventType;
+  eventStatus: AgentConnectionEventStatus;
+  messageId: string | null;
+  txHash: string | null;
+  reason: string | null;
+  metadataJson: string | null;
+  occurredAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AgentArtifactStatusRow {
+  artifactDigest: string;
+  artifactType: AgentSignedArtifactType;
+  identityWallet: string;
+  status: AgentArtifactRevocationStatus;
+  revokedByDigest: string | null;
+  revokedAt: number | null;
+  reason: string | null;
+  metadataJson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentLegacyPeerBackfillResult {
+  processedPeers: number;
+  createdContacts: number;
+  updatedContacts: number;
+  createdTransportEndpoints: number;
+  updatedTransportEndpoints: number;
 }
 
 function quantile(values: number[], q: number): number | null {
@@ -227,8 +308,102 @@ const agentSignedArtifactSelectSql = `SELECT id,
                                              updated_at AS updatedAt
                                       FROM agent_signed_artifacts`;
 
+const agentContactSelectSql = `SELECT contact_id AS contactId,
+                                      identity_wallet AS identityWallet,
+                                      legacy_peer_id AS legacyPeerId,
+                                      display_name AS displayName,
+                                      handle,
+                                      status,
+                                      supported_protocols_json AS supportedProtocolsJson,
+                                      capability_profile AS capabilityProfile,
+                                      capabilities_json AS capabilitiesJson,
+                                      metadata_json AS metadataJson,
+                                      created_at AS createdAt,
+                                      updated_at AS updatedAt
+                               FROM agent_contacts`;
+
+const agentTransportEndpointSelectSql = `SELECT id,
+                                                contact_id AS contactId,
+                                                identity_wallet AS identityWallet,
+                                                chain_id AS chainId,
+                                                receive_address AS receiveAddress,
+                                                pubkey,
+                                                key_id AS keyId,
+                                                binding_digest AS bindingDigest,
+                                                endpoint_status AS endpointStatus,
+                                                source,
+                                                metadata_json AS metadataJson,
+                                                created_at AS createdAt,
+                                                updated_at AS updatedAt
+                                         FROM agent_transport_endpoints`;
+
+const agentConnectionEventSelectSql = `SELECT id,
+                                              contact_id AS contactId,
+                                              identity_wallet AS identityWallet,
+                                              direction,
+                                              event_type AS eventType,
+                                              event_status AS eventStatus,
+                                              message_id AS messageId,
+                                              tx_hash AS txHash,
+                                              reason,
+                                              metadata_json AS metadataJson,
+                                              occurred_at AS occurredAt,
+                                              created_at AS createdAt,
+                                              updated_at AS updatedAt
+                                       FROM agent_connection_events`;
+
+const agentArtifactStatusSelectSql = `SELECT artifact_digest AS artifactDigest,
+                                             artifact_type AS artifactType,
+                                             identity_wallet AS identityWallet,
+                                             status,
+                                             revoked_by_digest AS revokedByDigest,
+                                             revoked_at AS revokedAt,
+                                             reason,
+                                             metadata_json AS metadataJson,
+                                             created_at AS createdAt,
+                                             updated_at AS updatedAt
+                                      FROM agent_artifact_status`;
+
 function normalizeAgentCommLimit(limit: number): number {
   return Math.max(1, Math.min(1000, Math.floor(limit)));
+}
+
+function normalizeChainId(value?: number): number {
+  if (value === undefined) {
+    return 0;
+  }
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function toLegacyBackfillContactStatus(status: AgentPeerStatus): AgentContactStatus {
+  switch (status) {
+    case "trusted":
+      return "trusted";
+    case "blocked":
+      return "blocked";
+    case "revoked":
+      return "revoked";
+    case "pending":
+    default:
+      return "imported";
+  }
+}
+
+function toLegacyBackfillEndpointStatus(status: AgentPeerStatus): AgentTransportEndpointStatus {
+  switch (status) {
+    case "blocked":
+      return "inactive";
+    case "revoked":
+      return "revoked";
+    case "trusted":
+    case "pending":
+    default:
+      return "active";
+  }
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
 }
 
 export class StateStore {
@@ -489,6 +664,68 @@ export class StateStore {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS agent_contacts (
+        contact_id TEXT PRIMARY KEY,
+        identity_wallet TEXT NOT NULL UNIQUE,
+        legacy_peer_id TEXT UNIQUE,
+        display_name TEXT,
+        handle TEXT,
+        status TEXT NOT NULL,
+        supported_protocols_json TEXT NOT NULL,
+        capability_profile TEXT,
+        capabilities_json TEXT NOT NULL,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_transport_endpoints (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        identity_wallet TEXT NOT NULL,
+        chain_id INTEGER NOT NULL,
+        receive_address TEXT NOT NULL,
+        pubkey TEXT NOT NULL,
+        key_id TEXT NOT NULL,
+        binding_digest TEXT,
+        endpoint_status TEXT NOT NULL,
+        source TEXT NOT NULL,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(contact_id, receive_address, key_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_connection_events (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        identity_wallet TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        event_status TEXT NOT NULL,
+        message_id TEXT,
+        tx_hash TEXT,
+        reason TEXT,
+        metadata_json TEXT,
+        occurred_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(contact_id, direction, event_type, message_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_artifact_status (
+        artifact_digest TEXT PRIMARY KEY,
+        artifact_type TEXT NOT NULL,
+        identity_wallet TEXT NOT NULL,
+        status TEXT NOT NULL,
+        revoked_by_digest TEXT,
+        revoked_at INTEGER,
+        reason TEXT,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_opportunities_status_detected_at
       ON opportunities(status, detected_at DESC);
 
@@ -539,6 +776,43 @@ export class StateStore {
 
       CREATE INDEX IF NOT EXISTS idx_agent_signed_artifacts_signer
       ON agent_signed_artifacts(signer, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_contacts_identity_wallet
+      ON agent_contacts(identity_wallet);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_contacts_legacy_peer_id
+      ON agent_contacts(legacy_peer_id);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_contacts_status_updated_at
+      ON agent_contacts(status, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_transport_endpoints_identity_wallet
+      ON agent_transport_endpoints(identity_wallet, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_transport_endpoints_contact_status
+      ON agent_transport_endpoints(contact_id, endpoint_status, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_transport_endpoints_receive_active
+      ON agent_transport_endpoints(receive_address, updated_at DESC)
+      WHERE endpoint_status = 'active';
+
+      CREATE INDEX IF NOT EXISTS idx_agent_connection_events_contact_status
+      ON agent_connection_events(contact_id, event_status, occurred_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_connection_events_pending_state
+      ON agent_connection_events(event_status, event_type, occurred_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_connection_events_message_id
+      ON agent_connection_events(message_id);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_connection_events_tx_hash
+      ON agent_connection_events(tx_hash);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_artifact_status_identity_wallet
+      ON agent_artifact_status(identity_wallet, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_artifact_status_status
+      ON agent_artifact_status(status, updated_at DESC);
     `);
 
     this.dropObsoletePhase2AgentCommTables(this.alphaDb);
@@ -783,6 +1057,132 @@ export class StateStore {
       verificationStatus: row.verificationStatus,
       verificationError: row.verificationError ?? undefined,
       source: row.source,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
+  }
+
+  private toAgentContact(row: AgentContactRow): AgentContact {
+    const primaryKey = `contactId=${row.contactId}`;
+    return this.parseAgentCommEntity(agentContactSchema, "agent contact", primaryKey, {
+      contactId: row.contactId,
+      identityWallet: row.identityWallet,
+      legacyPeerId: row.legacyPeerId ?? undefined,
+      displayName: row.displayName ?? undefined,
+      handle: row.handle ?? undefined,
+      status: row.status,
+      supportedProtocols: this.parseAgentCommJsonField(
+        z.array(z.string().min(1)),
+        "agent contact",
+        "supportedProtocolsJson",
+        primaryKey,
+        row.supportedProtocolsJson,
+      ),
+      capabilityProfile: row.capabilityProfile ?? undefined,
+      capabilities: this.parseAgentCommJsonField(
+        z.array(z.string().min(1)),
+        "agent contact",
+        "capabilitiesJson",
+        primaryKey,
+        row.capabilitiesJson,
+      ),
+      metadata: row.metadataJson
+        ? this.parseAgentCommJsonField(
+            jsonObjectSchema,
+            "agent contact",
+            "metadataJson",
+            primaryKey,
+            row.metadataJson,
+          )
+        : undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
+  }
+
+  private toAgentTransportEndpoint(row: AgentTransportEndpointRow): AgentTransportEndpoint {
+    const primaryKey = `id=${row.id}`;
+    return this.parseAgentCommEntity(
+      agentTransportEndpointSchema,
+      "agent transport endpoint",
+      primaryKey,
+      {
+        id: row.id,
+        contactId: row.contactId,
+        identityWallet: row.identityWallet,
+        chainId: row.chainId,
+        receiveAddress: row.receiveAddress,
+        pubkey: row.pubkey,
+        keyId: row.keyId,
+        bindingDigest: row.bindingDigest ?? undefined,
+        endpointStatus: row.endpointStatus,
+        source: row.source,
+        metadata: row.metadataJson
+          ? this.parseAgentCommJsonField(
+              jsonObjectSchema,
+              "agent transport endpoint",
+              "metadataJson",
+              primaryKey,
+              row.metadataJson,
+            )
+          : undefined,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      },
+    );
+  }
+
+  private toAgentConnectionEvent(row: AgentConnectionEventRow): AgentConnectionEvent {
+    const primaryKey = `id=${row.id}`;
+    return this.parseAgentCommEntity(
+      agentConnectionEventSchema,
+      "agent connection event",
+      primaryKey,
+      {
+        id: row.id,
+        contactId: row.contactId,
+        identityWallet: row.identityWallet,
+        direction: row.direction,
+        eventType: row.eventType,
+        eventStatus: row.eventStatus,
+        messageId: row.messageId ?? undefined,
+        txHash: row.txHash ?? undefined,
+        reason: row.reason ?? undefined,
+        metadata: row.metadataJson
+          ? this.parseAgentCommJsonField(
+              jsonObjectSchema,
+              "agent connection event",
+              "metadataJson",
+              primaryKey,
+              row.metadataJson,
+            )
+          : undefined,
+        occurredAt: row.occurredAt,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      },
+    );
+  }
+
+  private toAgentArtifactStatus(row: AgentArtifactStatusRow): AgentArtifactStatus {
+    const primaryKey = `artifactDigest=${row.artifactDigest}`;
+    return this.parseAgentCommEntity(agentArtifactStatusSchema, "agent artifact status", primaryKey, {
+      artifactDigest: row.artifactDigest,
+      artifactType: row.artifactType,
+      identityWallet: row.identityWallet,
+      status: row.status,
+      revokedByDigest: row.revokedByDigest ?? undefined,
+      revokedAt: row.revokedAt ?? undefined,
+      reason: row.reason ?? undefined,
+      metadata: row.metadataJson
+        ? this.parseAgentCommJsonField(
+            jsonObjectSchema,
+            "agent artifact status",
+            "metadataJson",
+            primaryKey,
+            row.metadataJson,
+          )
+        : undefined,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     });
@@ -1473,6 +1873,650 @@ export class StateStore {
       .prepare(`${agentSignedArtifactSelectSql} ${whereClause} ORDER BY updated_at DESC LIMIT ?`)
       .all(...params, safeLimit) as AgentSignedArtifactRow[];
     return rows.map((row) => this.toAgentSignedArtifact(row));
+  }
+
+  upsertAgentContact(input: {
+    contactId?: string;
+    identityWallet: string;
+    legacyPeerId?: string;
+    displayName?: string;
+    handle?: string;
+    status?: AgentContactStatus;
+    supportedProtocols?: string[];
+    capabilityProfile?: string;
+    capabilities?: string[];
+    metadata?: Record<string, unknown>;
+  }): AgentContact {
+    const existingByContactId = input.contactId ? this.getAgentContact(input.contactId) : null;
+    const existingByIdentityWallet = this.getAgentContactByIdentityWallet(input.identityWallet);
+    const existingByLegacyPeerId = input.legacyPeerId
+      ? this.getAgentContactByLegacyPeerId(input.legacyPeerId)
+      : null;
+
+    const existingCandidates = [existingByContactId, existingByIdentityWallet, existingByLegacyPeerId].filter(
+      (value): value is AgentContact => Boolean(value),
+    );
+    const distinctContactIds = [...new Set(existingCandidates.map((value) => value.contactId))];
+    if (distinctContactIds.length > 1) {
+      throw new Error(
+        `conflicting agent contacts for identityWallet=${input.identityWallet} legacyPeerId=${
+          input.legacyPeerId ?? "(none)"
+        }`,
+      );
+    }
+
+    const existing = existingCandidates[0];
+    const contactId = existing?.contactId ?? input.contactId ?? `ct_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    const metadata = input.metadata ?? existing?.metadata;
+
+    this.runPreparedStatement(
+      this.alphaDb,
+      `INSERT INTO agent_contacts (
+        contact_id, identity_wallet, legacy_peer_id, display_name, handle, status,
+        supported_protocols_json, capability_profile, capabilities_json, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(contact_id) DO UPDATE SET
+        identity_wallet = excluded.identity_wallet,
+        legacy_peer_id = excluded.legacy_peer_id,
+        display_name = excluded.display_name,
+        handle = excluded.handle,
+        status = excluded.status,
+        supported_protocols_json = excluded.supported_protocols_json,
+        capability_profile = excluded.capability_profile,
+        capabilities_json = excluded.capabilities_json,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at`,
+      contactId,
+      input.identityWallet,
+      input.legacyPeerId ?? existing?.legacyPeerId ?? null,
+      input.displayName ?? existing?.displayName ?? null,
+      input.handle ?? existing?.handle ?? null,
+      input.status ?? existing?.status ?? "imported",
+      JSON.stringify(
+        dedupeStrings(input.supportedProtocols ?? existing?.supportedProtocols ?? []),
+      ),
+      input.capabilityProfile ?? existing?.capabilityProfile ?? null,
+      JSON.stringify(dedupeStrings(input.capabilities ?? existing?.capabilities ?? [])),
+      metadata ? JSON.stringify(metadata) : null,
+      existing?.createdAt ?? now,
+      now,
+    );
+
+    return this.getRequiredAgentContact(contactId, `agent contact not found after upsert: ${contactId}`);
+  }
+
+  getAgentContact(contactId: string): AgentContact | null {
+    return this.getSingleAgentContact("WHERE contact_id = ?", contactId);
+  }
+
+  getAgentContactByIdentityWallet(identityWallet: string): AgentContact | null {
+    return this.getSingleAgentContact("WHERE identity_wallet = ?", identityWallet);
+  }
+
+  getAgentContactByLegacyPeerId(legacyPeerId: string): AgentContact | null {
+    return this.getSingleAgentContact("WHERE legacy_peer_id = ?", legacyPeerId);
+  }
+
+  getAgentContactByActiveReceiveAddress(receiveAddress: string): AgentContact | null {
+    const row = this.alphaDb
+      .prepare(
+        `SELECT c.contact_id AS contactId,
+                c.identity_wallet AS identityWallet,
+                c.legacy_peer_id AS legacyPeerId,
+                c.display_name AS displayName,
+                c.handle,
+                c.status,
+                c.supported_protocols_json AS supportedProtocolsJson,
+                c.capability_profile AS capabilityProfile,
+                c.capabilities_json AS capabilitiesJson,
+                c.metadata_json AS metadataJson,
+                c.created_at AS createdAt,
+                c.updated_at AS updatedAt
+         FROM agent_contacts c
+         INNER JOIN agent_transport_endpoints e
+           ON e.contact_id = c.contact_id
+         WHERE e.receive_address = ?
+           AND e.endpoint_status = 'active'
+         ORDER BY e.updated_at DESC
+         LIMIT 1`,
+      )
+      .get(receiveAddress) as AgentContactRow | undefined;
+    return row ? this.toAgentContact(row) : null;
+  }
+
+  private getSingleAgentContact(whereClause: string, ...params: unknown[]): AgentContact | null {
+    const row = this.alphaDb
+      .prepare(`${agentContactSelectSql} ${whereClause} LIMIT 1`)
+      .get(...params) as AgentContactRow | undefined;
+    return row ? this.toAgentContact(row) : null;
+  }
+
+  private getRequiredAgentContact(contactId: string, errorMessage: string): AgentContact {
+    const contact = this.getAgentContact(contactId);
+    if (!contact) {
+      throw new Error(errorMessage);
+    }
+    return contact;
+  }
+
+  listAgentContacts(
+    limit = 100,
+    filters?: {
+      status?: AgentContactStatus;
+      identityWallet?: string;
+      legacyPeerId?: string;
+    },
+  ): AgentContact[] {
+    const safeLimit = normalizeAgentCommLimit(limit);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.status) {
+      clauses.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters?.identityWallet) {
+      clauses.push("identity_wallet = ?");
+      params.push(filters.identityWallet);
+    }
+    if (filters?.legacyPeerId) {
+      clauses.push("legacy_peer_id = ?");
+      params.push(filters.legacyPeerId);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.alphaDb
+      .prepare(`${agentContactSelectSql} ${whereClause} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...params, safeLimit) as AgentContactRow[];
+    return rows.map((row) => this.toAgentContact(row));
+  }
+
+  upsertAgentTransportEndpoint(input: {
+    id?: string;
+    contactId: string;
+    identityWallet: string;
+    chainId: number;
+    receiveAddress: string;
+    pubkey: string;
+    keyId: string;
+    bindingDigest?: string;
+    endpointStatus?: AgentTransportEndpointStatus;
+    source: string;
+    metadata?: Record<string, unknown>;
+  }): AgentTransportEndpoint {
+    const contact = this.getRequiredAgentContact(
+      input.contactId,
+      `agent contact not found for endpoint upsert: ${input.contactId}`,
+    );
+    if (contact.identityWallet !== input.identityWallet) {
+      throw new Error(
+        `agent endpoint identityWallet mismatch for contact ${input.contactId}: expected ${contact.identityWallet}, got ${input.identityWallet}`,
+      );
+    }
+
+    const existing = this.getAgentTransportEndpointByContactAddressKey(
+      input.contactId,
+      input.receiveAddress,
+      input.keyId,
+    );
+    const id = existing?.id ?? input.id ?? crypto.randomUUID();
+    const now = new Date().toISOString();
+    const metadata = input.metadata ?? existing?.metadata;
+
+    this.runPreparedStatement(
+      this.alphaDb,
+      `INSERT INTO agent_transport_endpoints (
+        id, contact_id, identity_wallet, chain_id, receive_address, pubkey, key_id,
+        binding_digest, endpoint_status, source, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(contact_id, receive_address, key_id) DO UPDATE SET
+        identity_wallet = excluded.identity_wallet,
+        chain_id = excluded.chain_id,
+        pubkey = excluded.pubkey,
+        binding_digest = excluded.binding_digest,
+        endpoint_status = excluded.endpoint_status,
+        source = excluded.source,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at`,
+      id,
+      input.contactId,
+      input.identityWallet,
+      normalizeChainId(input.chainId),
+      input.receiveAddress,
+      input.pubkey,
+      input.keyId,
+      input.bindingDigest ?? null,
+      input.endpointStatus ?? "active",
+      input.source,
+      metadata ? JSON.stringify(metadata) : null,
+      existing?.createdAt ?? now,
+      now,
+    );
+
+    return this.getRequiredAgentTransportEndpoint(
+      id,
+      `agent transport endpoint not found after upsert: ${id}`,
+    );
+  }
+
+  getAgentTransportEndpoint(id: string): AgentTransportEndpoint | null {
+    return this.getSingleAgentTransportEndpoint("WHERE id = ?", id);
+  }
+
+  private getAgentTransportEndpointByContactAddressKey(
+    contactId: string,
+    receiveAddress: string,
+    keyId: string,
+  ): AgentTransportEndpoint | null {
+    return this.getSingleAgentTransportEndpoint(
+      "WHERE contact_id = ? AND receive_address = ? AND key_id = ?",
+      contactId,
+      receiveAddress,
+      keyId,
+    );
+  }
+
+  private getSingleAgentTransportEndpoint(
+    whereClause: string,
+    ...params: unknown[]
+  ): AgentTransportEndpoint | null {
+    const row = this.alphaDb
+      .prepare(`${agentTransportEndpointSelectSql} ${whereClause} LIMIT 1`)
+      .get(...params) as AgentTransportEndpointRow | undefined;
+    return row ? this.toAgentTransportEndpoint(row) : null;
+  }
+
+  private getRequiredAgentTransportEndpoint(
+    id: string,
+    errorMessage: string,
+  ): AgentTransportEndpoint {
+    const endpoint = this.getAgentTransportEndpoint(id);
+    if (!endpoint) {
+      throw new Error(errorMessage);
+    }
+    return endpoint;
+  }
+
+  listAgentTransportEndpoints(
+    limit = 100,
+    filters?: {
+      contactId?: string;
+      identityWallet?: string;
+      receiveAddress?: string;
+      endpointStatus?: AgentTransportEndpointStatus;
+    },
+  ): AgentTransportEndpoint[] {
+    const safeLimit = normalizeAgentCommLimit(limit);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.contactId) {
+      clauses.push("contact_id = ?");
+      params.push(filters.contactId);
+    }
+    if (filters?.identityWallet) {
+      clauses.push("identity_wallet = ?");
+      params.push(filters.identityWallet);
+    }
+    if (filters?.receiveAddress) {
+      clauses.push("receive_address = ?");
+      params.push(filters.receiveAddress);
+    }
+    if (filters?.endpointStatus) {
+      clauses.push("endpoint_status = ?");
+      params.push(filters.endpointStatus);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.alphaDb
+      .prepare(`${agentTransportEndpointSelectSql} ${whereClause} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...params, safeLimit) as AgentTransportEndpointRow[];
+    return rows.map((row) => this.toAgentTransportEndpoint(row));
+  }
+
+  upsertAgentConnectionEvent(input: {
+    id?: string;
+    contactId: string;
+    identityWallet: string;
+    direction: AgentMessageDirection;
+    eventType: AgentConnectionEventType;
+    eventStatus?: AgentConnectionEventStatus;
+    messageId?: string;
+    txHash?: string;
+    reason?: string;
+    metadata?: Record<string, unknown>;
+    occurredAt?: string;
+  }): AgentConnectionEvent {
+    const contact = this.getRequiredAgentContact(
+      input.contactId,
+      `agent contact not found for connection event upsert: ${input.contactId}`,
+    );
+    if (contact.identityWallet !== input.identityWallet) {
+      throw new Error(
+        `agent connection event identityWallet mismatch for contact ${input.contactId}: expected ${contact.identityWallet}, got ${input.identityWallet}`,
+      );
+    }
+
+    const existing = input.messageId
+      ? this.getSingleAgentConnectionEvent(
+          "WHERE contact_id = ? AND direction = ? AND event_type = ? AND message_id = ?",
+          input.contactId,
+          input.direction,
+          input.eventType,
+          input.messageId,
+        )
+      : null;
+    const id = existing?.id ?? input.id ?? crypto.randomUUID();
+    const now = new Date().toISOString();
+    const metadata = input.metadata ?? existing?.metadata;
+
+    this.runPreparedStatement(
+      this.alphaDb,
+      `INSERT INTO agent_connection_events (
+        id, contact_id, identity_wallet, direction, event_type, event_status, message_id, tx_hash,
+        reason, metadata_json, occurred_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(contact_id, direction, event_type, message_id) DO UPDATE SET
+        identity_wallet = excluded.identity_wallet,
+        event_status = excluded.event_status,
+        tx_hash = excluded.tx_hash,
+        reason = excluded.reason,
+        metadata_json = excluded.metadata_json,
+        occurred_at = excluded.occurred_at,
+        updated_at = excluded.updated_at`,
+      id,
+      input.contactId,
+      input.identityWallet,
+      input.direction,
+      input.eventType,
+      input.eventStatus ?? "pending",
+      input.messageId ?? null,
+      input.txHash ?? null,
+      input.reason ?? null,
+      metadata ? JSON.stringify(metadata) : null,
+      input.occurredAt ?? now,
+      existing?.createdAt ?? now,
+      now,
+    );
+
+    return this.getRequiredAgentConnectionEvent(
+      id,
+      `agent connection event not found after upsert: ${id}`,
+    );
+  }
+
+  getAgentConnectionEvent(id: string): AgentConnectionEvent | null {
+    return this.getSingleAgentConnectionEvent("WHERE id = ?", id);
+  }
+
+  private getSingleAgentConnectionEvent(
+    whereClause: string,
+    ...params: unknown[]
+  ): AgentConnectionEvent | null {
+    const row = this.alphaDb
+      .prepare(`${agentConnectionEventSelectSql} ${whereClause} LIMIT 1`)
+      .get(...params) as AgentConnectionEventRow | undefined;
+    return row ? this.toAgentConnectionEvent(row) : null;
+  }
+
+  private getRequiredAgentConnectionEvent(
+    id: string,
+    errorMessage: string,
+  ): AgentConnectionEvent {
+    const event = this.getAgentConnectionEvent(id);
+    if (!event) {
+      throw new Error(errorMessage);
+    }
+    return event;
+  }
+
+  listAgentConnectionEvents(
+    limit = 100,
+    filters?: {
+      contactId?: string;
+      identityWallet?: string;
+      direction?: AgentMessageDirection;
+      eventType?: AgentConnectionEventType;
+      eventStatus?: AgentConnectionEventStatus;
+    },
+  ): AgentConnectionEvent[] {
+    const safeLimit = normalizeAgentCommLimit(limit);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.contactId) {
+      clauses.push("contact_id = ?");
+      params.push(filters.contactId);
+    }
+    if (filters?.identityWallet) {
+      clauses.push("identity_wallet = ?");
+      params.push(filters.identityWallet);
+    }
+    if (filters?.direction) {
+      clauses.push("direction = ?");
+      params.push(filters.direction);
+    }
+    if (filters?.eventType) {
+      clauses.push("event_type = ?");
+      params.push(filters.eventType);
+    }
+    if (filters?.eventStatus) {
+      clauses.push("event_status = ?");
+      params.push(filters.eventStatus);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.alphaDb
+      .prepare(`${agentConnectionEventSelectSql} ${whereClause} ORDER BY occurred_at DESC LIMIT ?`)
+      .all(...params, safeLimit) as AgentConnectionEventRow[];
+    return rows.map((row) => this.toAgentConnectionEvent(row));
+  }
+
+  upsertAgentArtifactStatus(input: {
+    artifactDigest: string;
+    artifactType: AgentSignedArtifactType;
+    identityWallet: string;
+    status: AgentArtifactRevocationStatus;
+    revokedByDigest?: string;
+    revokedAt?: number;
+    reason?: string;
+    metadata?: Record<string, unknown>;
+  }): AgentArtifactStatus {
+    const now = new Date().toISOString();
+    const existing = this.getAgentArtifactStatus(input.artifactDigest);
+    const metadata = input.metadata ?? existing?.metadata;
+
+    this.runPreparedStatement(
+      this.alphaDb,
+      `INSERT INTO agent_artifact_status (
+        artifact_digest, artifact_type, identity_wallet, status, revoked_by_digest, revoked_at,
+        reason, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(artifact_digest) DO UPDATE SET
+        artifact_type = excluded.artifact_type,
+        identity_wallet = excluded.identity_wallet,
+        status = excluded.status,
+        revoked_by_digest = excluded.revoked_by_digest,
+        revoked_at = excluded.revoked_at,
+        reason = excluded.reason,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at`,
+      input.artifactDigest,
+      input.artifactType,
+      input.identityWallet,
+      input.status,
+      input.revokedByDigest ?? null,
+      input.revokedAt ?? null,
+      input.reason ?? null,
+      metadata ? JSON.stringify(metadata) : null,
+      existing?.createdAt ?? now,
+      now,
+    );
+
+    return this.getRequiredAgentArtifactStatus(
+      input.artifactDigest,
+      `agent artifact status not found after upsert: ${input.artifactDigest}`,
+    );
+  }
+
+  getAgentArtifactStatus(artifactDigest: string): AgentArtifactStatus | null {
+    const row = this.alphaDb
+      .prepare(`${agentArtifactStatusSelectSql} WHERE artifact_digest = ? LIMIT 1`)
+      .get(artifactDigest) as AgentArtifactStatusRow | undefined;
+    return row ? this.toAgentArtifactStatus(row) : null;
+  }
+
+  private getRequiredAgentArtifactStatus(
+    artifactDigest: string,
+    errorMessage: string,
+  ): AgentArtifactStatus {
+    const status = this.getAgentArtifactStatus(artifactDigest);
+    if (!status) {
+      throw new Error(errorMessage);
+    }
+    return status;
+  }
+
+  listAgentArtifactStatuses(
+    limit = 100,
+    filters?: {
+      identityWallet?: string;
+      status?: AgentArtifactRevocationStatus;
+      artifactType?: AgentSignedArtifactType;
+    },
+  ): AgentArtifactStatus[] {
+    const safeLimit = normalizeAgentCommLimit(limit);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.identityWallet) {
+      clauses.push("identity_wallet = ?");
+      params.push(filters.identityWallet);
+    }
+    if (filters?.status) {
+      clauses.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters?.artifactType) {
+      clauses.push("artifact_type = ?");
+      params.push(filters.artifactType);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.alphaDb
+      .prepare(`${agentArtifactStatusSelectSql} ${whereClause} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...params, safeLimit) as AgentArtifactStatusRow[];
+    return rows.map((row) => this.toAgentArtifactStatus(row));
+  }
+
+  backfillAgentContactFromLegacyPeer(
+    peerId: string,
+    options: { chainId?: number } = {},
+  ): AgentLegacyPeerBackfillResult {
+    const peer = this.getRequiredAgentPeer(peerId, `legacy agent peer not found: ${peerId}`);
+    return this.backfillLegacyPeers([peer], options);
+  }
+
+  backfillAgentContactsFromLegacyPeers(
+    options: { chainId?: number } = {},
+  ): AgentLegacyPeerBackfillResult {
+    const rows = this.alphaDb
+      .prepare(`${agentPeerSelectSql} ORDER BY updated_at DESC`)
+      .all() as AgentPeerRow[];
+    const peers = rows.map((row) => this.toAgentPeer(row));
+    return this.backfillLegacyPeers(peers, options);
+  }
+
+  private backfillLegacyPeers(
+    peers: AgentPeer[],
+    options: { chainId?: number },
+  ): AgentLegacyPeerBackfillResult {
+    const chainId = normalizeChainId(options.chainId);
+    const result: AgentLegacyPeerBackfillResult = {
+      processedPeers: 0,
+      createdContacts: 0,
+      updatedContacts: 0,
+      createdTransportEndpoints: 0,
+      updatedTransportEndpoints: 0,
+    };
+
+    for (const peer of peers) {
+      const now = new Date().toISOString();
+      const existingByLegacy = this.getAgentContactByLegacyPeerId(peer.peerId);
+      const existingByIdentity = this.getAgentContactByIdentityWallet(peer.walletAddress);
+      if (
+        existingByLegacy &&
+        existingByIdentity &&
+        existingByLegacy.contactId !== existingByIdentity.contactId
+      ) {
+        throw new Error(
+          `cannot backfill legacy peer ${peer.peerId}: identity wallet ${peer.walletAddress} maps to multiple contacts`,
+        );
+      }
+
+      const existingContact = existingByLegacy ?? existingByIdentity;
+      const contact = this.upsertAgentContact({
+        contactId: existingContact?.contactId,
+        identityWallet: peer.walletAddress,
+        legacyPeerId: peer.peerId,
+        displayName: existingContact?.displayName ?? peer.name,
+        status: toLegacyBackfillContactStatus(peer.status),
+        supportedProtocols: dedupeStrings([
+          ...(existingContact?.supportedProtocols ?? []),
+          "agent-comm/1",
+        ]),
+        capabilityProfile: existingContact?.capabilityProfile ?? "legacy-manual",
+        capabilities: dedupeStrings([...(peer.capabilities ?? []), ...(existingContact?.capabilities ?? [])]),
+        metadata: {
+          ...(existingContact?.metadata ?? {}),
+          legacyBackfill: {
+            source: "agent_peers",
+            peerId: peer.peerId,
+            peerStatus: peer.status,
+            syncedAt: now,
+          },
+          ...(peer.metadata ? { legacyPeerMetadata: peer.metadata } : {}),
+        },
+      });
+
+      const keyId = `legacy-peer:${peer.peerId}`;
+      const existingEndpoint = this.getAgentTransportEndpointByContactAddressKey(
+        contact.contactId,
+        peer.walletAddress,
+        keyId,
+      );
+      this.upsertAgentTransportEndpoint({
+        id: existingEndpoint?.id,
+        contactId: contact.contactId,
+        identityWallet: contact.identityWallet,
+        chainId,
+        receiveAddress: peer.walletAddress,
+        pubkey: peer.pubkey,
+        keyId,
+        endpointStatus: toLegacyBackfillEndpointStatus(peer.status),
+        source: "legacy_peer_backfill",
+        metadata: {
+          ...(existingEndpoint?.metadata ?? {}),
+          legacyPeerId: peer.peerId,
+          legacyPeerStatus: peer.status,
+        },
+      });
+
+      result.processedPeers += 1;
+      if (existingContact) {
+        result.updatedContacts += 1;
+      } else {
+        result.createdContacts += 1;
+      }
+      if (existingEndpoint) {
+        result.updatedTransportEndpoints += 1;
+      } else {
+        result.createdTransportEndpoints += 1;
+      }
+    }
+
+    return result;
   }
 
   insertDiscoverySession(input: {
