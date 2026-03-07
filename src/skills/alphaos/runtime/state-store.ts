@@ -99,6 +99,11 @@ interface AgentMessageRow {
   txHash: string | null;
   nonce: string;
   commandType: AgentCommandType;
+  envelopeVersion: number | null;
+  contactId: string | null;
+  identityWallet: string | null;
+  transportAddress: string | null;
+  trustOutcome: string | null;
   ciphertext: string;
   status: AgentMessageStatus;
   error: string | null;
@@ -262,6 +267,11 @@ const agentMessageSelectSql = `SELECT id,
                                       tx_hash AS txHash,
                                       nonce,
                                       command_type AS commandType,
+                                      envelope_version AS envelopeVersion,
+                                      contact_id AS contactId,
+                                      identity_wallet AS identityWallet,
+                                      transport_address AS transportAddress,
+                                      trust_outcome AS trustOutcome,
                                       ciphertext,
                                       status,
                                       error,
@@ -613,6 +623,11 @@ export class StateStore {
         tx_hash TEXT,
         nonce TEXT NOT NULL,
         command_type TEXT NOT NULL,
+        envelope_version INTEGER,
+        contact_id TEXT,
+        identity_wallet TEXT,
+        transport_address TEXT,
+        trust_outcome TEXT,
         ciphertext TEXT NOT NULL,
         status TEXT NOT NULL,
         sent_at TEXT,
@@ -822,6 +837,11 @@ export class StateStore {
     this.ensureColumn(this.alphaDb, "trades", "error_type", "TEXT");
     this.ensureColumn(this.alphaDb, "trades", "latency_ms", "REAL");
     this.ensureColumn(this.alphaDb, "trades", "slippage_deviation_bps", "REAL");
+    this.ensureColumn(this.alphaDb, "agent_messages", "envelope_version", "INTEGER");
+    this.ensureColumn(this.alphaDb, "agent_messages", "contact_id", "TEXT");
+    this.ensureColumn(this.alphaDb, "agent_messages", "identity_wallet", "TEXT");
+    this.ensureColumn(this.alphaDb, "agent_messages", "transport_address", "TEXT");
+    this.ensureColumn(this.alphaDb, "agent_messages", "trust_outcome", "TEXT");
 
     this.vaultDb.exec(`
       CREATE TABLE IF NOT EXISTS vault_items (
@@ -984,6 +1004,11 @@ export class StateStore {
       txHash: row.txHash ?? undefined,
       nonce: row.nonce,
       commandType: row.commandType,
+      envelopeVersion: row.envelopeVersion ?? undefined,
+      contactId: row.contactId ?? undefined,
+      identityWallet: row.identityWallet ?? undefined,
+      transportAddress: row.transportAddress ?? undefined,
+      trustOutcome: row.trustOutcome ?? undefined,
       ciphertext: row.ciphertext,
       status: row.status,
       error: row.error ?? undefined,
@@ -1512,6 +1537,11 @@ export class StateStore {
     txHash?: string;
     nonce: string;
     commandType: AgentCommandType;
+    envelopeVersion?: number;
+    contactId?: string;
+    identityWallet?: string;
+    transportAddress?: string;
+    trustOutcome?: string;
     ciphertext: string;
     status?: AgentMessageStatus;
     sentAt?: string;
@@ -1524,15 +1554,21 @@ export class StateStore {
     this.runPreparedStatement(
       this.alphaDb,
       `INSERT INTO agent_messages (
-        id, direction, peer_id, tx_hash, nonce, command_type, ciphertext, status,
-        sent_at, received_at, executed_at, error, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, direction, peer_id, tx_hash, nonce, command_type, envelope_version, contact_id,
+        identity_wallet, transport_address, trust_outcome, ciphertext, status, sent_at,
+        received_at, executed_at, error, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       input.direction,
       input.peerId,
       input.txHash ?? null,
       input.nonce,
       input.commandType,
+      input.envelopeVersion ?? null,
+      input.contactId ?? null,
+      input.identityWallet ?? null,
+      input.transportAddress ?? null,
+      input.trustOutcome ?? null,
       input.ciphertext,
       input.status ?? "pending",
       input.sentAt ?? null,
@@ -1615,6 +1651,11 @@ export class StateStore {
     status: AgentMessageStatus,
     patch?: {
       txHash?: string;
+      envelopeVersion?: number;
+      contactId?: string;
+      identityWallet?: string;
+      transportAddress?: string;
+      trustOutcome?: string;
       sentAt?: string;
       receivedAt?: string;
       executedAt?: string;
@@ -1627,6 +1668,11 @@ export class StateStore {
       `UPDATE agent_messages
        SET status = ?,
            tx_hash = COALESCE(?, tx_hash),
+           envelope_version = COALESCE(?, envelope_version),
+           contact_id = COALESCE(?, contact_id),
+           identity_wallet = COALESCE(?, identity_wallet),
+           transport_address = COALESCE(?, transport_address),
+           trust_outcome = COALESCE(?, trust_outcome),
            sent_at = COALESCE(?, sent_at),
            received_at = COALESCE(?, received_at),
            executed_at = COALESCE(?, executed_at),
@@ -1635,6 +1681,11 @@ export class StateStore {
        WHERE id = ?`,
       status,
       patch?.txHash ?? null,
+      patch?.envelopeVersion ?? null,
+      patch?.contactId ?? null,
+      patch?.identityWallet ?? null,
+      patch?.transportAddress ?? null,
+      patch?.trustOutcome ?? null,
       patch?.sentAt ?? null,
       patch?.receivedAt ?? null,
       patch?.executedAt ?? null,

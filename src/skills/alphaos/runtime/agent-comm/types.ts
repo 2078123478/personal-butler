@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { DiscoveryStrategyId, ExecutionMode } from "../../types";
+import { signedIdentityArtifactBundleSchema } from "./artifact-workflow";
 
 type Assert<T extends true> = T;
 type IsEqual<A, B> =
@@ -169,6 +170,7 @@ export const connectionInviteCommandPayloadSchema = z
     requestedProfile: z.string().min(1).optional(),
     requestedCapabilities: z.array(z.string().min(1)).optional(),
     note: z.string().optional(),
+    inlineCard: signedIdentityArtifactBundleSchema.optional(),
   })
   .strict();
 
@@ -177,6 +179,7 @@ export const connectionAcceptCommandPayloadSchema = z
     capabilityProfile: z.string().min(1).optional(),
     capabilities: z.array(z.string().min(1)).optional(),
     note: z.string().optional(),
+    inlineCard: signedIdentityArtifactBundleSchema.optional(),
   })
   .strict();
 
@@ -184,12 +187,14 @@ export const connectionRejectCommandPayloadSchema = z
   .object({
     reason: z.string().min(1).optional(),
     note: z.string().optional(),
+    inlineCard: signedIdentityArtifactBundleSchema.optional(),
   })
   .strict();
 
 export const connectionConfirmCommandPayloadSchema = z
   .object({
     note: z.string().optional(),
+    inlineCard: signedIdentityArtifactBundleSchema.optional(),
   })
   .strict();
 
@@ -336,6 +341,11 @@ export const agentMessageSchema = z
     txHash: z.string().optional(),
     nonce: z.string().min(1),
     commandType: agentCommandTypeSchema,
+    envelopeVersion: z.number().int().positive().optional(),
+    contactId: z.string().min(1).optional(),
+    identityWallet: z.string().min(1).optional(),
+    transportAddress: z.string().min(1).optional(),
+    trustOutcome: z.string().min(1).optional(),
     ciphertext: z.string().min(1),
     status: agentMessageStatusSchema,
     error: z.string().optional(),

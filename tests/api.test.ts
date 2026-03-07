@@ -602,6 +602,21 @@ describe("API server", () => {
       receivedAt: new Date().toISOString(),
       executedAt: new Date().toISOString(),
     });
+    const contact = store.upsertAgentContact({
+      identityWallet: "0x8888888888888888888888888888888888888888",
+      legacyPeerId: "peer-contact",
+      status: "pending_inbound",
+      supportedProtocols: ["agent-comm/2"],
+      capabilities: ["ping"],
+    });
+    store.upsertAgentConnectionEvent({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      direction: "inbound",
+      eventType: "connection_invite",
+      eventStatus: "pending",
+      occurredAt: "2026-03-07T00:00:00.000Z",
+    });
 
     const app = createServer(engine as never, store, manifest, {
       apiSecret: TEST_API_SECRET,
@@ -629,6 +644,14 @@ describe("API server", () => {
     expect(statusResp.status).toBe(200);
     expect((statusResp.body as { snapshot: { enabled: boolean } }).snapshot.enabled).toBe(true);
     expect((statusResp.body as { trustedPeerCount: number }).trustedPeerCount).toBe(1);
+    expect((statusResp.body as { contactCount: number }).contactCount).toBe(1);
+    expect(
+      (statusResp.body as { contactStatusCounts: { pending_inbound: number } }).contactStatusCounts
+        .pending_inbound,
+    ).toBe(1);
+    expect(
+      (statusResp.body as { pendingInviteCounts: { total: number } }).pendingInviteCounts.total,
+    ).toBe(1);
 
     const messagesResp = await invokeApi(
       app,

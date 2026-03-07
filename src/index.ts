@@ -15,9 +15,13 @@ import {
   initTemporaryDemoWallet,
   listLocalIdentityProfiles,
   registerTrustedPeerEntry,
+  sendCommConnectionAccept,
+  sendCommConnectionInvite,
+  sendCommConnectionReject,
   sendCommPing,
   sendCommStartDiscovery,
 } from "./skills/alphaos/runtime/agent-comm/entrypoints";
+import { listAgentContactSurfaceItems } from "./skills/alphaos/runtime/agent-comm/contact-surfaces";
 import { startAgentCommRuntime } from "./skills/alphaos/runtime/agent-comm/runtime";
 import { agentCommandTypes, type AgentPeerCapability } from "./skills/alphaos/runtime/agent-comm/types";
 
@@ -57,6 +61,25 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
 function readFlag(args: ParsedCliArgs, name: string): string | undefined {
   const value = args.flags.get(name);
   return typeof value === "string" ? value : undefined;
+}
+
+function readBooleanFlag(args: ParsedCliArgs, name: string): boolean | undefined {
+  const value = args.flags.get(name);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  throw new Error(`--${name} must be true|false`);
 }
 
 function parsePositiveIntegerFlag(raw: string | undefined, label: string): number | undefined {
@@ -118,14 +141,7 @@ function writeJson(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
-const plannedAgentCommCommands = new Set([
-  "agent-comm:contacts:list",
-  "agent-comm:connect:invite",
-  "agent-comm:connect:accept",
-  "agent-comm:connect:reject",
-]);
-
-function getAgentCommHelpText(): string {
+export function getAgentCommHelpText(): string {
   return [
     "Agent-Comm CLI",
     "",
@@ -135,21 +151,21 @@ function getAgentCommHelpText(): string {
     "  agent-comm:identity",
     "  agent-comm:card:export [--display-name <name>] [--output <file>]",
     "  agent-comm:card:import <file>",
+    "  agent-comm:contacts:list",
+    "  agent-comm:connect:invite <contactRef> [--attach-inline-card]",
+    "  agent-comm:connect:accept <contactRef> [--attach-inline-card]",
+    "  agent-comm:connect:reject <contactRef>",
     "  agent-comm:peer:trust    (legacy/manual v1 fallback)",
     "  agent-comm:send <ping|start_discovery> <peerId>",
     "",
-    "Planned v2 contact-flow commands (reserved, not implemented in this phase):",
-    "  agent-comm:contacts:list",
-    "  agent-comm:connect:invite <contactRef>",
-    "  agent-comm:connect:accept <contactRef>",
-    "  agent-comm:connect:reject <contactRef>",
-    "",
+    "Notes:",
+    "  contactRef currently accepts contactId only.",
     "Canonical typed-data contracts:",
     "  docs/AGENT_COMM_V2_ARTIFACT_CONTRACTS.md",
   ].join("\n");
 }
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
   const argv = process.argv.slice(2);
@@ -157,12 +173,6 @@ async function run(): Promise<void> {
   if (command === "agent-comm:help") {
     process.stdout.write(`${getAgentCommHelpText()}\n`);
     return;
-  }
-
-  if (command && plannedAgentCommCommands.has(command)) {
-    throw new Error(
-      `${command} is reserved for the Agent-Comm v2 identity-artifact flow and is not implemented yet. See docs/AGENT_COMM_V2_ARTIFACT_CONTRACTS.md and use agent-comm:help for current status.`,
-    );
   }
 
   if (command === "vault:set") {
@@ -352,6 +362,128 @@ async function run(): Promise<void> {
     return;
   }
 
+  if (command === "agent-comm:contacts:list") {
+    const store = new StateStore(config.dataDir);
+    try {
+      writeJson({
+        action: "agent-comm:contacts:list",
+        contacts: listAgentContactSurfaceItems(store),
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
+  if (command === "agent-comm:connect:invite") {
+    const parsed = parseCliArgs(argv.slice(1));
+    const [contactId] = parsed.positionals;
+    if (!contactId) {
+      throw new Error(
+        "Usage: tsx src/index.ts agent-comm:connect:invite <contactRef> [--sender-peer-id <peerId>] [--requested-profile <profile>] [--requested-capabilities ping,start_discovery] [--note <note>] [--attach-inline-card]",
+      );
+    }
+
+    const store = new StateStore(config.dataDir);
+    const vault = new VaultService(store);
+    try {
+      const result = await sendCommConnectionInvite(
+        {
+          config,
+          store,
+          vault,
+        },
+        {
+          contactId,
+          senderPeerId: readFlag(parsed, "sender-peer-id"),
+          requestedProfile: readFlag(parsed, "requested-profile"),
+          requestedCapabilities: parseCsv(readFlag(parsed, "requested-capabilities")),
+          note: readFlag(parsed, "note"),
+          attachInlineCard: readBooleanFlag(parsed, "attach-inline-card"),
+        },
+      );
+      writeJson({
+        action: "agent-comm:connect:invite",
+        ...result,
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
+  if (command === "agent-comm:connect:accept") {
+    const parsed = parseCliArgs(argv.slice(1));
+    const [contactId] = parsed.positionals;
+    if (!contactId) {
+      throw new Error(
+        "Usage: tsx src/index.ts agent-comm:connect:accept <contactRef> [--sender-peer-id <peerId>] [--capability-profile <profile>] [--capabilities ping,start_discovery] [--note <note>] [--attach-inline-card]",
+      );
+    }
+
+    const store = new StateStore(config.dataDir);
+    const vault = new VaultService(store);
+    try {
+      const result = await sendCommConnectionAccept(
+        {
+          config,
+          store,
+          vault,
+        },
+        {
+          contactId,
+          senderPeerId: readFlag(parsed, "sender-peer-id"),
+          capabilityProfile: readFlag(parsed, "capability-profile"),
+          capabilities: parseCsv(readFlag(parsed, "capabilities")),
+          note: readFlag(parsed, "note"),
+          attachInlineCard: readBooleanFlag(parsed, "attach-inline-card"),
+        },
+      );
+      writeJson({
+        action: "agent-comm:connect:accept",
+        ...result,
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
+  if (command === "agent-comm:connect:reject") {
+    const parsed = parseCliArgs(argv.slice(1));
+    const [contactId] = parsed.positionals;
+    if (!contactId) {
+      throw new Error(
+        "Usage: tsx src/index.ts agent-comm:connect:reject <contactRef> [--sender-peer-id <peerId>] [--reason <reason>] [--note <note>]",
+      );
+    }
+
+    const store = new StateStore(config.dataDir);
+    const vault = new VaultService(store);
+    try {
+      const result = await sendCommConnectionReject(
+        {
+          config,
+          store,
+          vault,
+        },
+        {
+          contactId,
+          senderPeerId: readFlag(parsed, "sender-peer-id"),
+          reason: readFlag(parsed, "reason"),
+          note: readFlag(parsed, "note"),
+        },
+      );
+      writeJson({
+        action: "agent-comm:connect:reject",
+        ...result,
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
   if (command === "agent-comm:peer:trust") {
     const parsed = parseCliArgs(argv.slice(1));
     const [peerId, walletAddress, pubkey] = parsed.positionals;
@@ -522,4 +654,6 @@ async function run(): Promise<void> {
   process.on("SIGTERM", shutdown);
 }
 
-void run();
+if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
+  void run();
+}

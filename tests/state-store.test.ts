@@ -282,17 +282,29 @@ describe("StateStore P0 safety", () => {
       peerId: peer.peerId,
       nonce: "nonce-1",
       commandType: "ping",
+      envelopeVersion: 1,
+      contactId: "ct-1",
+      identityWallet: peer.walletAddress,
+      transportAddress: peer.walletAddress,
+      trustOutcome: "pending_outbound",
       ciphertext: "0xdeadbeef",
       status: "pending",
     });
     expect(store.getAgentMessage(message.id)?.nonce).toBe("nonce-1");
+    expect(store.getAgentMessage(message.id)?.trustOutcome).toBe("pending_outbound");
 
     const updatedMessage = store.updateAgentMessageStatus(message.id, "sent", {
       txHash: "0xtx1",
+      trustOutcome: "trusted",
       sentAt: "2026-03-06T00:00:00.000Z",
     });
     expect(updatedMessage.txHash).toBe("0xtx1");
     expect(updatedMessage.status).toBe("sent");
+    expect(updatedMessage.envelopeVersion).toBe(1);
+    expect(updatedMessage.contactId).toBe("ct-1");
+    expect(updatedMessage.identityWallet).toBe(peer.walletAddress);
+    expect(updatedMessage.transportAddress).toBe(peer.walletAddress);
+    expect(updatedMessage.trustOutcome).toBe("trusted");
     expect(
       store.listAgentMessages(10, {
         peerId: peer.peerId,

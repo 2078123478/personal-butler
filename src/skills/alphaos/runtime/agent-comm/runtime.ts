@@ -211,7 +211,7 @@ async function executeInboundMessage(
 }
 
 function createTransactionHandler(
-  options: Pick<StartAgentCommRuntimeOptions, "discovery" | "onchain" | "store">,
+  options: Pick<StartAgentCommRuntimeOptions, "config" | "discovery" | "onchain" | "store">,
   wallet: ReturnType<typeof restoreShadowWallet>,
   setRuntimeError: (code: string, message: string, details?: Record<string, unknown>) => void,
 ): (event: TransactionEvent) => Promise<void> {
@@ -221,6 +221,7 @@ function createTransactionHandler(
         {
           wallet,
           store: options.store,
+          expectedChainId: options.config.commChainId,
         },
         event,
       );
@@ -328,6 +329,7 @@ export async function startAgentCommRuntime(
   const setRuntimeError = createRuntimeErrorRecorder(logger, runtimeState);
   const handleTransaction = createTransactionHandler(
     {
+      config,
       discovery: options.discovery,
       onchain: options.onchain,
       store,

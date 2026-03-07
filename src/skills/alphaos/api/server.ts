@@ -13,16 +13,29 @@ import { SandboxReplayService } from "../runtime/sandbox-replay";
 import { DiscoveryEngine } from "../runtime/discovery/discovery-engine";
 import type { BacktestSnapshotRow, RiskPolicy, SkillManifest } from "../types";
 import {
+  exportIdentityArtifactBundle,
+  importIdentityArtifactBundle,
+  sendCommConnectionAccept,
+  sendCommConnectionInvite,
+  sendCommConnectionReject,
   sendCommPing,
   sendCommStartDiscovery,
   type AgentCommEntrypointDependencies,
 } from "../runtime/agent-comm/entrypoints";
+import {
+  listAgentContactSurfaceItems,
+  listAgentInviteSurfaceItems,
+} from "../runtime/agent-comm/contact-surfaces";
 import type { AgentCommRuntimeHandle } from "../runtime/agent-comm/runtime";
 import {
   agentCommandTypes,
+  agentConnectionEventStatuses,
+  agentContactStatuses,
   agentMessageDirections,
   agentMessageStatuses,
   agentPeerStatuses,
+  type AgentConnectionEventStatus,
+  type AgentContactStatus,
   type AgentMessageDirection,
   type AgentMessageStatus,
   type AgentPeerCapability,
@@ -122,10 +135,30 @@ function parseOptionalAllowedValue<T extends string>(
 
 function createAgentCommStatusResponse(store: StateStore, runtime: AgentCommRuntimeHandle) {
   const snapshot = runtime.getSnapshot();
+  const contacts = listAgentContactSurfaceItems(store, 1000);
+  const contactStatusCounts = Object.fromEntries(
+    agentContactStatuses.map((status) => [status, 0]),
+  ) as Record<AgentContactStatus, number>;
+  let pendingInboundInviteCount = 0;
+  let pendingOutboundInviteCount = 0;
+
+  for (const contact of contacts) {
+    contactStatusCounts[contact.status] += 1;
+    pendingInboundInviteCount += contact.pendingInvites.inbound;
+    pendingOutboundInviteCount += contact.pendingInvites.outbound;
+  }
+
   return {
     snapshot,
     trustedPeerCount: store.listAgentPeers(1000, "trusted").length,
     recentMessageCount: store.listAgentMessages(20).length,
+    contactCount: contacts.length,
+    contactStatusCounts,
+    pendingInviteCounts: {
+      inbound: pendingInboundInviteCount,
+      outbound: pendingOutboundInviteCount,
+      total: pendingInboundInviteCount + pendingOutboundInviteCount,
+    },
   };
 }
 
@@ -175,6 +208,71 @@ function parseAgentPeerListQuery(
     ok: true,
     limit: toLimit(query.limit, 100),
     status: status.value,
+  };
+}
+
+function parseAgentContactListQuery(
+  query: express.Request["query"],
+):
+  | {
+      ok: true;
+      limit: number;
+      filters: {
+        status?: AgentContactStatus;
+        identityWallet?: string;
+        legacyPeerId?: string;
+      };
+    }
+  | { ok: false; error: string } {
+  const status = parseOptionalAllowedValue(query.status, agentContactStatuses);
+  if (status.raw && !status.value) {
+    return { ok: false, error: "invalid contact status" };
+  }
+
+  return {
+    ok: true,
+    limit: toLimit(query.limit, 100),
+    filters: {
+      status: status.value,
+      identityWallet: readOptionalTrimmedString(query.identityWallet),
+      legacyPeerId: readOptionalTrimmedString(query.legacyPeerId),
+    },
+  };
+}
+
+function parseAgentInviteListQuery(
+  query: express.Request["query"],
+):
+  | {
+      ok: true;
+      limit: number;
+      filters: {
+        contactId?: string;
+        identityWallet?: string;
+        direction?: AgentMessageDirection;
+        eventStatus?: AgentConnectionEventStatus;
+      };
+    }
+  | { ok: false; error: string } {
+  const direction = parseOptionalAllowedValue(query.direction, agentMessageDirections);
+  if (direction.raw && !direction.value) {
+    return { ok: false, error: "invalid direction" };
+  }
+
+  const status = parseOptionalAllowedValue(query.status, agentConnectionEventStatuses);
+  if (status.raw && !status.value) {
+    return { ok: false, error: "invalid invite status" };
+  }
+
+  return {
+    ok: true,
+    limit: toLimit(query.limit, 100),
+    filters: {
+      contactId: readOptionalTrimmedString(query.contactId),
+      identityWallet: readOptionalTrimmedString(query.identityWallet),
+      direction: direction.value,
+      eventStatus: status.value,
+    },
   };
 }
 
@@ -260,6 +358,17 @@ function parseOptionalPositiveInteger(input: unknown): { ok: true; value?: numbe
   return { ok: true, value: parsed };
 }
 
+function parseOptionalNonNegativeInteger(input: unknown): { ok: true; value?: number } | { ok: false } {
+  if (input === undefined) {
+    return { ok: true };
+  }
+  const parsed = Number(input);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return { ok: false };
+  }
+  return { ok: true, value: parsed };
+}
+
 function parseOptionalStringField(
   payload: Record<string, unknown>,
   key: string,
@@ -273,6 +382,59 @@ function parseOptionalStringField(
   }
   const value = input.trim();
   return { ok: true, value: value || undefined };
+}
+
+function parseOptionalStringArrayField(
+  payload: Record<string, unknown>,
+  key: string,
+): { ok: true; value?: string[] } | { ok: false; error: string } {
+  const input = payload[key];
+  if (input === undefined) {
+    return { ok: true };
+  }
+  if (!Array.isArray(input)) {
+    return { ok: false, error: `${key} must be a string array` };
+  }
+
+  const values: string[] = [];
+  for (const item of input) {
+    if (typeof item !== "string") {
+      return { ok: false, error: `${key} must be a string array` };
+    }
+    const value = item.trim();
+    if (!value) {
+      return { ok: false, error: `${key} must be a string array` };
+    }
+    values.push(value);
+  }
+
+  return {
+    ok: true,
+    value: values.length > 0 ? [...new Set(values)] : undefined,
+  };
+}
+
+function parseOptionalBooleanField(
+  payload: Record<string, unknown>,
+  key: string,
+): { ok: true; value?: boolean } | { ok: false; error: string } {
+  const input = payload[key];
+  if (input === undefined) {
+    return { ok: true };
+  }
+  if (typeof input === "boolean") {
+    return { ok: true, value: input };
+  }
+  if (typeof input === "string") {
+    const normalized = input.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return { ok: true, value: true };
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return { ok: true, value: false };
+    }
+  }
+  return { ok: false, error: `${key} must be a boolean` };
 }
 
 function parseOptionalPairsField(
@@ -395,6 +557,277 @@ function parseStartDiscoverySendBody(
       ...(durationMinutes.value ? { durationMinutes: durationMinutes.value } : {}),
       ...(sampleIntervalSec.value ? { sampleIntervalSec: sampleIntervalSec.value } : {}),
       ...(topN.value ? { topN: topN.value } : {}),
+    },
+  };
+}
+
+function parseCardImportBody(
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        bundle: unknown;
+        source?: string;
+        expectedChainId?: number;
+        nowUnixSeconds?: number;
+      };
+    }
+  | { ok: false; error: string } {
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  if (!("bundle" in payload)) {
+    return { ok: false, error: "bundle is required" };
+  }
+
+  const source = parseOptionalStringField(payload, "source");
+  if (!source.ok) {
+    return source;
+  }
+
+  const expectedChainId = parseOptionalPositiveInteger(payload.expectedChainId);
+  if (!expectedChainId.ok) {
+    return { ok: false, error: "expectedChainId must be a positive integer" };
+  }
+
+  const nowUnixSeconds = parseOptionalNonNegativeInteger(payload.nowUnixSeconds);
+  if (!nowUnixSeconds.ok) {
+    return { ok: false, error: "nowUnixSeconds must be a non-negative integer" };
+  }
+
+  return {
+    ok: true,
+    input: {
+      bundle: payload.bundle,
+      ...(source.value ? { source: source.value } : {}),
+      ...(expectedChainId.value !== undefined ? { expectedChainId: expectedChainId.value } : {}),
+      ...(nowUnixSeconds.value !== undefined ? { nowUnixSeconds: nowUnixSeconds.value } : {}),
+    },
+  };
+}
+
+function parseCardExportBody(
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        displayName?: string;
+        handle?: string;
+        capabilityProfile?: string;
+        capabilities?: string[];
+        expiresInDays?: number;
+        keyId?: string;
+        legacyPeerId?: string;
+        nowUnixSeconds?: number;
+      };
+    }
+  | { ok: false; error: string } {
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const displayName = parseOptionalStringField(payload, "displayName");
+  if (!displayName.ok) {
+    return displayName;
+  }
+  const handle = parseOptionalStringField(payload, "handle");
+  if (!handle.ok) {
+    return handle;
+  }
+  const capabilityProfile = parseOptionalStringField(payload, "capabilityProfile");
+  if (!capabilityProfile.ok) {
+    return capabilityProfile;
+  }
+  const capabilities = parseOptionalStringArrayField(payload, "capabilities");
+  if (!capabilities.ok) {
+    return capabilities;
+  }
+  const keyId = parseOptionalStringField(payload, "keyId");
+  if (!keyId.ok) {
+    return keyId;
+  }
+  const legacyPeerId = parseOptionalStringField(payload, "legacyPeerId");
+  if (!legacyPeerId.ok) {
+    return legacyPeerId;
+  }
+
+  const expiresInDays = parseOptionalPositiveInteger(payload.expiresInDays);
+  if (!expiresInDays.ok) {
+    return { ok: false, error: "expiresInDays must be a positive integer" };
+  }
+
+  const nowUnixSeconds = parseOptionalNonNegativeInteger(payload.nowUnixSeconds);
+  if (!nowUnixSeconds.ok) {
+    return { ok: false, error: "nowUnixSeconds must be a non-negative integer" };
+  }
+
+  return {
+    ok: true,
+    input: {
+      ...(displayName.value ? { displayName: displayName.value } : {}),
+      ...(handle.value ? { handle: handle.value } : {}),
+      ...(capabilityProfile.value ? { capabilityProfile: capabilityProfile.value } : {}),
+      ...(capabilities.value ? { capabilities: capabilities.value } : {}),
+      ...(expiresInDays.value !== undefined ? { expiresInDays: expiresInDays.value } : {}),
+      ...(keyId.value ? { keyId: keyId.value } : {}),
+      ...(legacyPeerId.value ? { legacyPeerId: legacyPeerId.value } : {}),
+      ...(nowUnixSeconds.value !== undefined ? { nowUnixSeconds: nowUnixSeconds.value } : {}),
+    },
+  };
+}
+
+function parseConnectionInviteBody(
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        contactId: string;
+        senderPeerId?: string;
+        requestedProfile?: string;
+        requestedCapabilities?: string[];
+        note?: string;
+        attachInlineCard?: boolean;
+      };
+    }
+  | { ok: false; error: string } {
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const contactId = readTrimmedString(payload.contactId);
+  if (!contactId) {
+    return { ok: false, error: "contactId is required" };
+  }
+
+  const senderPeerId = parseOptionalStringField(payload, "senderPeerId");
+  if (!senderPeerId.ok) {
+    return senderPeerId;
+  }
+  const requestedProfile = parseOptionalStringField(payload, "requestedProfile");
+  if (!requestedProfile.ok) {
+    return requestedProfile;
+  }
+  const requestedCapabilities = parseOptionalStringArrayField(payload, "requestedCapabilities");
+  if (!requestedCapabilities.ok) {
+    return requestedCapabilities;
+  }
+  const note = parseOptionalStringField(payload, "note");
+  if (!note.ok) {
+    return note;
+  }
+  const attachInlineCard = parseOptionalBooleanField(payload, "attachInlineCard");
+  if (!attachInlineCard.ok) {
+    return attachInlineCard;
+  }
+
+  return {
+    ok: true,
+    input: {
+      contactId,
+      ...(senderPeerId.value ? { senderPeerId: senderPeerId.value } : {}),
+      ...(requestedProfile.value ? { requestedProfile: requestedProfile.value } : {}),
+      ...(requestedCapabilities.value ? { requestedCapabilities: requestedCapabilities.value } : {}),
+      ...(note.value ? { note: note.value } : {}),
+      ...(attachInlineCard.value !== undefined
+        ? { attachInlineCard: attachInlineCard.value }
+        : {}),
+    },
+  };
+}
+
+function parseConnectionAcceptBody(
+  contactIdInput: unknown,
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        contactId: string;
+        senderPeerId?: string;
+        capabilityProfile?: string;
+        capabilities?: string[];
+        note?: string;
+        attachInlineCard?: boolean;
+      };
+    }
+  | { ok: false; error: string } {
+  const contactId = readTrimmedString(contactIdInput);
+  if (!contactId) {
+    return { ok: false, error: "contactId is required" };
+  }
+
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const senderPeerId = parseOptionalStringField(payload, "senderPeerId");
+  if (!senderPeerId.ok) {
+    return senderPeerId;
+  }
+  const capabilityProfile = parseOptionalStringField(payload, "capabilityProfile");
+  if (!capabilityProfile.ok) {
+    return capabilityProfile;
+  }
+  const capabilities = parseOptionalStringArrayField(payload, "capabilities");
+  if (!capabilities.ok) {
+    return capabilities;
+  }
+  const note = parseOptionalStringField(payload, "note");
+  if (!note.ok) {
+    return note;
+  }
+  const attachInlineCard = parseOptionalBooleanField(payload, "attachInlineCard");
+  if (!attachInlineCard.ok) {
+    return attachInlineCard;
+  }
+
+  return {
+    ok: true,
+    input: {
+      contactId,
+      ...(senderPeerId.value ? { senderPeerId: senderPeerId.value } : {}),
+      ...(capabilityProfile.value ? { capabilityProfile: capabilityProfile.value } : {}),
+      ...(capabilities.value ? { capabilities: capabilities.value } : {}),
+      ...(note.value ? { note: note.value } : {}),
+      ...(attachInlineCard.value !== undefined
+        ? { attachInlineCard: attachInlineCard.value }
+        : {}),
+    },
+  };
+}
+
+function parseConnectionRejectBody(
+  contactIdInput: unknown,
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        contactId: string;
+        senderPeerId?: string;
+        reason?: string;
+        note?: string;
+      };
+    }
+  | { ok: false; error: string } {
+  const contactId = readTrimmedString(contactIdInput);
+  if (!contactId) {
+    return { ok: false, error: "contactId is required" };
+  }
+
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const senderPeerId = parseOptionalStringField(payload, "senderPeerId");
+  if (!senderPeerId.ok) {
+    return senderPeerId;
+  }
+  const reason = parseOptionalStringField(payload, "reason");
+  if (!reason.ok) {
+    return reason;
+  }
+  const note = parseOptionalStringField(payload, "note");
+  if (!note.ok) {
+    return note;
+  }
+
+  return {
+    ok: true,
+    input: {
+      contactId,
+      ...(senderPeerId.value ? { senderPeerId: senderPeerId.value } : {}),
+      ...(reason.value ? { reason: reason.value } : {}),
+      ...(note.value ? { note: note.value } : {}),
     },
   };
 }
@@ -911,7 +1344,7 @@ export function createServer(
     };
   };
 
-  const handleAgentCommSendError = (res: express.Response, error: unknown) => {
+  const handleAgentCommApiError = (res: express.Response, error: unknown) => {
     if (error instanceof ZodError) {
       res.status(400).json({
         error: error.issues.map((issue) => issue.message).join("; ") || "invalid request",
@@ -920,9 +1353,18 @@ export function createServer(
     }
 
     const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith("contact not found:")) {
+      res.status(404).json({ error: message });
+      return;
+    }
+    if (message.startsWith("cannot send ")) {
+      res.status(409).json({ error: message });
+      return;
+    }
     if (
       message.startsWith("Trusted peer not found:") ||
       message.startsWith("Peer is not trusted:") ||
+      message.startsWith("active transport endpoint not found") ||
       message.startsWith("Invalid ")
     ) {
       res.status(400).json({ error: message });
@@ -1189,6 +1631,133 @@ export function createServer(
     res.json(peer);
   });
 
+  app.get("/api/v1/agent-comm/contacts", (req, res) => {
+    const parsed = parseAgentContactListQuery(req.query);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    res.json({
+      items: listAgentContactSurfaceItems(store, parsed.limit, parsed.filters),
+    });
+  });
+
+  app.post("/api/v1/agent-comm/cards/import", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseCardImportBody(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(
+        await importIdentityArtifactBundle(
+          {
+            config: deps.config,
+            store,
+          },
+          parsed.input,
+        ),
+      );
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
+  app.post("/api/v1/agent-comm/cards/export", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseCardExportBody(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(await exportIdentityArtifactBundle(deps, parsed.input));
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
+  app.get("/api/v1/agent-comm/invites", (req, res) => {
+    const parsed = parseAgentInviteListQuery(req.query);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    res.json({
+      items: listAgentInviteSurfaceItems(store, parsed.limit, parsed.filters),
+    });
+  });
+
+  app.post("/api/v1/agent-comm/connections/invite", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseConnectionInviteBody(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(await sendCommConnectionInvite(deps, parsed.input));
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
+  app.post("/api/v1/agent-comm/connections/:contactId/accept", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseConnectionAcceptBody(req.params.contactId, req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(await sendCommConnectionAccept(deps, parsed.input));
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
+  app.post("/api/v1/agent-comm/connections/:contactId/reject", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseConnectionRejectBody(req.params.contactId, req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(await sendCommConnectionReject(deps, parsed.input));
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
   app.post("/api/v1/agent-comm/send/ping", async (req, res) => {
     const deps = ensureAgentCommSendDeps(res);
     if (!deps) {
@@ -1204,7 +1773,7 @@ export function createServer(
     try {
       res.json(await sendCommPing(deps, parsed.input));
     } catch (error) {
-      handleAgentCommSendError(res, error);
+      handleAgentCommApiError(res, error);
     }
   });
 
@@ -1223,7 +1792,7 @@ export function createServer(
     try {
       res.json(await sendCommStartDiscovery(deps, parsed.input));
     } catch (error) {
-      handleAgentCommSendError(res, error);
+      handleAgentCommApiError(res, error);
     }
   });
 

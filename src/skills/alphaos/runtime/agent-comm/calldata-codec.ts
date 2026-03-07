@@ -28,6 +28,12 @@ export function decodeEnvelope(hex: string): EncryptedEnvelope {
   if (normalized.length === 0 || normalized.length % 2 !== 0) {
     throw new Error("Envelope calldata must be valid hex");
   }
-  const json = Buffer.from(normalized, "hex").toString("utf8");
+  const payload = Buffer.from(normalized, "hex");
+  if (payload.byteLength > AGENT_COMM_DEFAULT_MAX_MESSAGE_BYTES) {
+    throw new Error(
+      `Envelope message exceeds max size: ${payload.byteLength} > ${AGENT_COMM_DEFAULT_MAX_MESSAGE_BYTES} bytes`,
+    );
+  }
+  const json = payload.toString("utf8");
   return encryptedEnvelopeSchema.parse(JSON.parse(json) as unknown);
 }

@@ -32,6 +32,7 @@ import {
   type AgentPeerCapability,
   type AgentTransportEndpoint,
   type ConnectionAcceptCommandPayload,
+  type ConnectionConfirmCommandPayload,
   type ConnectionInviteCommandPayload,
   type ConnectionRejectCommandPayload,
   type PingCommandPayload,
@@ -128,6 +129,7 @@ export interface SendCommConnectionInviteOptions {
   requestedProfile?: ConnectionInviteCommandPayload["requestedProfile"];
   requestedCapabilities?: ConnectionInviteCommandPayload["requestedCapabilities"];
   note?: ConnectionInviteCommandPayload["note"];
+  attachInlineCard?: boolean;
 }
 
 export interface SendCommConnectionAcceptOptions {
@@ -137,6 +139,7 @@ export interface SendCommConnectionAcceptOptions {
   capabilityProfile?: ConnectionAcceptCommandPayload["capabilityProfile"];
   capabilities?: ConnectionAcceptCommandPayload["capabilities"];
   note?: ConnectionAcceptCommandPayload["note"];
+  attachInlineCard?: boolean;
 }
 
 export interface SendCommConnectionRejectOptions {
@@ -145,6 +148,14 @@ export interface SendCommConnectionRejectOptions {
   senderPeerId?: string;
   reason?: ConnectionRejectCommandPayload["reason"];
   note?: ConnectionRejectCommandPayload["note"];
+}
+
+export interface SendCommConnectionConfirmOptions {
+  masterPassword?: string;
+  contactId: string;
+  senderPeerId?: string;
+  note?: ConnectionConfirmCommandPayload["note"];
+  attachInlineCard?: boolean;
 }
 
 export interface SendCommConnectionCommandResult extends SendCommCommandResult {
@@ -181,6 +192,11 @@ export interface ImportIdentityArtifactBundleResult {
   ok: boolean;
   reasons: string[];
   failureCodes: IdentityArtifactFailureCode[];
+  contactId?: string;
+  identityWallet?: string;
+  status?: AgentContactStatus;
+  supportedProtocols?: string[];
+  activeTransportAddress?: string;
   contactCardDigest?: string;
   contactCardFingerprint?: string;
   transportBindingDigest?: string;
@@ -398,6 +414,71 @@ function upsertOutboundConnectionEvent(
   });
 }
 
+function readConnectionEventMetadataString(
+  event: AgentConnectionEvent | undefined,
+  key: string,
+): string | undefined {
+  const value = event?.metadata?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readConnectionEventMetadataStringArray(
+  event: AgentConnectionEvent | undefined,
+  key: string,
+): string[] | undefined {
+  const value = event?.metadata?.[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0))];
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function getPendingInviteEvent(
+  store: StateStore,
+  contactId: string,
+  direction: "inbound" | "outbound",
+): AgentConnectionEvent | undefined {
+  return store.listAgentConnectionEvents(1, {
+    contactId,
+    direction,
+    eventType: "connection_invite",
+    eventStatus: "pending",
+  })[0];
+}
+
+interface OutboundInlineCardAttachment {
+  bundle: AgentCommSignedIdentityArtifactBundle;
+  contactCardDigest: string;
+  transportBindingDigest: string;
+}
+
+async function resolveOutboundInlineCardAttachment(
+  deps: AgentCommEntrypointDependencies,
+  options: {
+    masterPassword?: string;
+    senderPeerId?: string;
+    attachInlineCard?: boolean;
+  },
+): Promise<OutboundInlineCardAttachment | undefined> {
+  if (!options.attachInlineCard) {
+    return undefined;
+  }
+
+  const senderPeerId = resolveSenderPeerId(deps.config, options.senderPeerId);
+  const exported = await exportIdentityArtifactBundle(deps, {
+    masterPassword: options.masterPassword,
+    legacyPeerId: senderPeerId,
+  });
+
+  return {
+    bundle: exported.bundle,
+    contactCardDigest: exported.contactCardDigest,
+    transportBindingDigest: exported.transportBindingDigest,
+  };
+}
+
 function classifyIdentityArtifactFailure(reason: string): IdentityArtifactFailureCode {
   const normalized = reason.toLowerCase();
   if (normalized.includes("malformed transport binding")) {
@@ -517,6 +598,58 @@ function persistSignedTransportBindingArtifact(
     verificationError,
     source,
   });
+}
+
+function materializeImportedContact(
+  store: StateStore,
+  input: {
+    contactCard: AgentCommSignedContactCardArtifact;
+    transportBinding: AgentCommSignedTransportBindingArtifact;
+    transportBindingDigest: string;
+    source: string;
+  },
+): { contact: AgentContact; endpoint: AgentTransportEndpoint } {
+  const existingContact =
+    store.getAgentContactByIdentityWallet(input.contactCard.identityWallet) ??
+    (normalizeOptionalText(input.contactCard.legacyPeerId)
+      ? store.getAgentContactByLegacyPeerId(input.contactCard.legacyPeerId)
+      : null);
+
+  const contact = store.upsertAgentContact({
+    contactId: existingContact?.contactId,
+    identityWallet: input.contactCard.identityWallet,
+    legacyPeerId: normalizeOptionalText(input.contactCard.legacyPeerId) ?? existingContact?.legacyPeerId,
+    displayName: normalizeOptionalText(input.contactCard.displayName) ?? existingContact?.displayName,
+    handle: normalizeOptionalText(input.contactCard.handle) ?? existingContact?.handle,
+    status: existingContact?.status ?? "imported",
+    supportedProtocols:
+      normalizeOptionalStringList([
+        ...(existingContact?.supportedProtocols ?? []),
+        ...input.contactCard.protocols,
+      ]) ?? [],
+    capabilityProfile:
+      existingContact?.capabilityProfile ??
+      normalizeOptionalText(input.contactCard.defaults.capabilityProfile),
+    capabilities:
+      existingContact?.capabilities && existingContact.capabilities.length > 0
+        ? existingContact.capabilities
+        : normalizeOptionalStringList(input.contactCard.defaults.capabilities) ?? [],
+    metadata: existingContact?.metadata,
+  });
+
+  const endpoint = store.upsertAgentTransportEndpoint({
+    contactId: contact.contactId,
+    identityWallet: contact.identityWallet,
+    chainId: input.transportBinding.chainId,
+    receiveAddress: input.transportBinding.receiveAddress,
+    pubkey: input.transportBinding.pubkey,
+    keyId: input.transportBinding.keyId,
+    bindingDigest: input.transportBindingDigest,
+    endpointStatus: "active",
+    source: input.source,
+  });
+
+  return { contact, endpoint };
 }
 
 export function getCommIdentity(
@@ -710,6 +843,7 @@ export async function importIdentityArtifactBundle(
   });
   const source = input.source ?? "local_import";
   const reasons = verification.errors;
+  let importedContact: { contact: AgentContact; endpoint: AgentTransportEndpoint } | null = null;
 
   if (verification.contactCard) {
     persistSignedContactCardArtifact(
@@ -733,10 +867,24 @@ export async function importIdentityArtifactBundle(
     );
   }
 
+  if (verification.ok && verification.contactCard && verification.transportBinding) {
+    importedContact = materializeImportedContact(deps.store, {
+      contactCard: verification.contactCard.artifact,
+      transportBinding: verification.transportBinding.artifact,
+      transportBindingDigest: verification.transportBinding.digest,
+      source,
+    });
+  }
+
   return {
     ok: verification.ok,
     reasons,
     failureCodes: classifyIdentityArtifactFailures(reasons),
+    contactId: importedContact?.contact.contactId,
+    identityWallet: importedContact?.contact.identityWallet,
+    status: importedContact?.contact.status,
+    supportedProtocols: importedContact?.contact.supportedProtocols,
+    activeTransportAddress: importedContact?.endpoint.receiveAddress,
     contactCardDigest: verification.contactCard?.digest,
     contactCardFingerprint: verification.contactCard?.fingerprint,
     transportBindingDigest: verification.transportBinding?.digest,
@@ -915,6 +1063,11 @@ export async function sendCommConnectionInvite(
   const requestedProfile = normalizeOptionalText(options.requestedProfile);
   const requestedCapabilities = normalizeOptionalStringList(options.requestedCapabilities);
   const note = normalizeOptionalText(options.note);
+  const inlineCardAttachment = await resolveOutboundInlineCardAttachment(deps, {
+    masterPassword: options.masterPassword,
+    senderPeerId: options.senderPeerId,
+    attachInlineCard: options.attachInlineCard,
+  });
 
   const sent = await sendCommCommandToRecipient(deps, {
     masterPassword: options.masterPassword,
@@ -930,6 +1083,7 @@ export async function sendCommConnectionInvite(
         ...(requestedProfile ? { requestedProfile } : {}),
         ...(requestedCapabilities ? { requestedCapabilities } : {}),
         ...(note ? { note } : {}),
+        ...(inlineCardAttachment ? { inlineCard: inlineCardAttachment.bundle } : {}),
       },
     },
   });
@@ -949,6 +1103,12 @@ export async function sendCommConnectionInvite(
       requestedProfile,
       requestedCapabilities,
       senderPeerId: sent.senderPeerId,
+      ...(inlineCardAttachment
+        ? {
+            inlineCardContactCardDigest: inlineCardAttachment.contactCardDigest,
+            inlineCardTransportBindingDigest: inlineCardAttachment.transportBindingDigest,
+          }
+        : {}),
     },
   });
 
@@ -969,9 +1129,21 @@ export async function sendCommConnectionAccept(
   const target = resolveOutboundContactTarget(deps.store, options.contactId);
   assertContactStatus(target.contact, ["pending_inbound"], "send connection_accept");
 
-  const capabilityProfile = normalizeOptionalText(options.capabilityProfile);
-  const capabilities = normalizeOptionalStringList(options.capabilities);
+  const pendingInvite = getPendingInviteEvent(deps.store, target.contact.contactId, "inbound");
+  const capabilityProfile =
+    normalizeOptionalText(options.capabilityProfile) ??
+    readConnectionEventMetadataString(pendingInvite, "requestedProfile") ??
+    target.contact.capabilityProfile;
+  const capabilities =
+    normalizeOptionalStringList(options.capabilities) ??
+    readConnectionEventMetadataStringArray(pendingInvite, "requestedCapabilities") ??
+    target.contact.capabilities;
   const note = normalizeOptionalText(options.note);
+  const inlineCardAttachment = await resolveOutboundInlineCardAttachment(deps, {
+    masterPassword: options.masterPassword,
+    senderPeerId: options.senderPeerId,
+    attachInlineCard: options.attachInlineCard,
+  });
 
   const sent = await sendCommCommandToRecipient(deps, {
     masterPassword: options.masterPassword,
@@ -987,6 +1159,7 @@ export async function sendCommConnectionAccept(
         ...(capabilityProfile ? { capabilityProfile } : {}),
         ...(capabilities ? { capabilities } : {}),
         ...(note ? { note } : {}),
+        ...(inlineCardAttachment ? { inlineCard: inlineCardAttachment.bundle } : {}),
       },
     },
   });
@@ -1008,6 +1181,12 @@ export async function sendCommConnectionAccept(
       capabilityProfile,
       capabilities,
       senderPeerId: sent.senderPeerId,
+      ...(inlineCardAttachment
+        ? {
+            inlineCardContactCardDigest: inlineCardAttachment.contactCardDigest,
+            inlineCardTransportBindingDigest: inlineCardAttachment.transportBindingDigest,
+          }
+        : {}),
     },
   });
 
@@ -1063,6 +1242,69 @@ export async function sendCommConnectionReject(
       reason,
       note,
       senderPeerId: sent.senderPeerId,
+    },
+  });
+
+  return {
+    ...sent,
+    contactId: updatedContact.contactId,
+    contactStatus: updatedContact.status,
+    connectionEventId: event.id,
+    connectionEventType: event.eventType,
+    connectionEventStatus: event.eventStatus,
+  };
+}
+
+export async function sendCommConnectionConfirm(
+  deps: AgentCommEntrypointDependencies,
+  options: SendCommConnectionConfirmOptions,
+): Promise<SendCommConnectionCommandResult> {
+  const target = resolveOutboundContactTarget(deps.store, options.contactId);
+  assertContactStatus(target.contact, ["trusted", "pending_outbound"], "send connection_confirm");
+
+  const note = normalizeOptionalText(options.note);
+  const inlineCardAttachment = await resolveOutboundInlineCardAttachment(deps, {
+    masterPassword: options.masterPassword,
+    senderPeerId: options.senderPeerId,
+    attachInlineCard: options.attachInlineCard,
+  });
+
+  const sent = await sendCommCommandToRecipient(deps, {
+    masterPassword: options.masterPassword,
+    senderPeerId: options.senderPeerId,
+    recipient: {
+      peerId: target.peerId,
+      walletAddress: target.endpoint.receiveAddress,
+      pubkey: target.endpoint.pubkey,
+    },
+    command: {
+      type: "connection_confirm",
+      payload: {
+        ...(note ? { note } : {}),
+        ...(inlineCardAttachment ? { inlineCard: inlineCardAttachment.bundle } : {}),
+      },
+    },
+  });
+
+  const updatedContact = updateContactStatus(deps.store, target.contact, {
+    status: "trusted",
+  });
+  const event = upsertOutboundConnectionEvent(deps.store, {
+    contact: updatedContact,
+    eventType: "connection_confirm",
+    eventStatus: "applied",
+    messageId: findOutboundMessageId(deps.store, sent.peerId, sent.nonce),
+    txHash: sent.txHash,
+    reason: note,
+    occurredAt: sent.sentAt,
+    metadata: {
+      senderPeerId: sent.senderPeerId,
+      ...(inlineCardAttachment
+        ? {
+            inlineCardContactCardDigest: inlineCardAttachment.contactCardDigest,
+            inlineCardTransportBindingDigest: inlineCardAttachment.transportBindingDigest,
+          }
+        : {}),
     },
   });
 

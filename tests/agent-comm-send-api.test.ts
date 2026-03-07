@@ -11,6 +11,11 @@ vi.mock("../src/skills/alphaos/runtime/agent-comm/entrypoints", async () => {
   );
   return {
     ...actual,
+    exportIdentityArtifactBundle: vi.fn(),
+    importIdentityArtifactBundle: vi.fn(),
+    sendCommConnectionAccept: vi.fn(),
+    sendCommConnectionInvite: vi.fn(),
+    sendCommConnectionReject: vi.fn(),
     sendCommPing: vi.fn(),
     sendCommStartDiscovery: vi.fn(),
   };
@@ -18,6 +23,11 @@ vi.mock("../src/skills/alphaos/runtime/agent-comm/entrypoints", async () => {
 
 import { createServer } from "../src/skills/alphaos/api/server";
 import {
+  exportIdentityArtifactBundle,
+  importIdentityArtifactBundle,
+  sendCommConnectionAccept,
+  sendCommConnectionInvite,
+  sendCommConnectionReject,
   sendCommPing,
   sendCommStartDiscovery,
   type AgentCommEntrypointDependencies,
@@ -47,7 +57,7 @@ type ApiResponse = {
 
 async function invokeApi(
   app: ReturnType<typeof createServer>,
-  method: "POST",
+  method: "GET" | "POST",
   url: string,
   payload?: Record<string, unknown>,
   headers?: Record<string, string>,
@@ -172,7 +182,7 @@ function buildApp() {
   };
 }
 
-describe("agent-comm send API", () => {
+describe("agent-comm HTTP API", () => {
   it("keeps send routes behind bearer auth", async () => {
     const { app } = buildApp();
 
@@ -182,6 +192,419 @@ describe("agent-comm send API", () => {
 
     expect(response.status).toBe(401);
     expect(vi.mocked(sendCommPing)).not.toHaveBeenCalled();
+  });
+
+  it("lists contacts and pending invite records from the store", async () => {
+    const { app, store } = buildApp();
+    const contact = store.upsertAgentContact({
+      identityWallet: "0x1111111111111111111111111111111111111111",
+      legacyPeerId: "peer-contact",
+      status: "imported",
+      supportedProtocols: ["agent-comm/2"],
+      capabilities: ["ping"],
+    });
+    store.upsertAgentSignedArtifact({
+      artifactType: "ContactCard",
+      digest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      signer: contact.identityWallet,
+      identityWallet: contact.identityWallet,
+      chainId: 196,
+      issuedAt: 1741305600,
+      expiresAt: 1772841600,
+      payload: {
+        displayName: "Contact Agent",
+      },
+      proof: {
+        type: "eip712",
+      },
+      verificationStatus: "verified",
+      source: "unit-test",
+    });
+    store.upsertAgentTransportEndpoint({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      chainId: 196,
+      receiveAddress: "0x2222222222222222222222222222222222222222",
+      pubkey: "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      keyId: "rk_contact",
+      bindingDigest: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      endpointStatus: "active",
+      source: "unit-test",
+    });
+    store.upsertAgentConnectionEvent({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      direction: "inbound",
+      eventType: "connection_invite",
+      eventStatus: "pending",
+      reason: "invite",
+      metadata: {
+        requestedProfile: "research-collab",
+        requestedCapabilities: ["ping", "start_discovery"],
+        note: "invite",
+        senderPeerId: "peer-contact",
+      },
+      occurredAt: "2026-03-06T00:00:00.000Z",
+    });
+    store.upsertAgentConnectionEvent({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      direction: "outbound",
+      eventType: "connection_accept",
+      eventStatus: "applied",
+      occurredAt: "2026-03-06T00:01:00.000Z",
+    });
+
+    const contactsResponse = await invokeApi(
+      app,
+      "GET",
+      "/api/v1/agent-comm/contacts?status=imported",
+      undefined,
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(contactsResponse.status).toBe(200);
+    expect(contactsResponse.body).toEqual({
+      items: [
+        expect.objectContaining({
+          contactId: contact.contactId,
+          identityWallet: contact.identityWallet,
+          status: "imported",
+          signerFingerprint: "0xaaaaaaaa...aaaaaaaa",
+          proofSigner: contact.identityWallet,
+          currentTransportAddress: "0x2222222222222222222222222222222222222222",
+          pendingInvites: {
+            inbound: 1,
+            outbound: 0,
+            total: 1,
+          },
+          latestPendingInvite: {
+            direction: "inbound",
+            occurredAt: "2026-03-06T00:00:00.000Z",
+            requestedProfile: "research-collab",
+            requestedCapabilities: ["ping", "start_discovery"],
+            note: "invite",
+          },
+        }),
+      ],
+    });
+
+    const invitesResponse = await invokeApi(
+      app,
+      "GET",
+      "/api/v1/agent-comm/invites?direction=inbound&status=pending",
+      undefined,
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(invitesResponse.status).toBe(200);
+    expect(invitesResponse.body).toEqual({
+      items: [
+        expect.objectContaining({
+          contactId: contact.contactId,
+          direction: "inbound",
+          eventType: "connection_invite",
+          eventStatus: "pending",
+          contactStatus: "imported",
+          signerFingerprint: "0xaaaaaaaa...aaaaaaaa",
+          proofSigner: contact.identityWallet,
+          currentTransportAddress: "0x2222222222222222222222222222222222222222",
+          requestedProfile: "research-collab",
+          requestedCapabilities: ["ping", "start_discovery"],
+          note: "invite",
+          senderPeerId: "peer-contact",
+        }),
+      ],
+    });
+  });
+
+  it("validates the new contact and connection route inputs", async () => {
+    const { app } = buildApp();
+
+    const contactsResponse = await invokeApi(
+      app,
+      "GET",
+      "/api/v1/agent-comm/contacts?status=not-a-status",
+      undefined,
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+    expect(contactsResponse.status).toBe(400);
+    expect(contactsResponse.body).toEqual({
+      error: "invalid contact status",
+    });
+
+    const inviteResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/connections/invite",
+      {
+        requestedProfile: "research-collab",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(inviteResponse.status).toBe(400);
+    expect(inviteResponse.body).toEqual({
+      error: "contactId is required",
+    });
+    expect(vi.mocked(sendCommConnectionInvite)).not.toHaveBeenCalled();
+
+    const invalidInlineFlagResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/connections/invite",
+      {
+        contactId: "ct_bad_flag",
+        attachInlineCard: "maybe",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+    expect(invalidInlineFlagResponse.status).toBe(400);
+    expect(invalidInlineFlagResponse.body).toEqual({
+      error: "attachInlineCard must be a boolean",
+    });
+    expect(vi.mocked(sendCommConnectionInvite)).not.toHaveBeenCalled();
+  });
+
+  it("forwards card and connection routes to the matching entrypoints", async () => {
+    const { app, store, vault, config } = buildApp();
+
+    vi.mocked(importIdentityArtifactBundle).mockResolvedValue({
+      ok: true,
+      reasons: [],
+      failureCodes: [],
+      contactId: "ct_imported",
+      identityWallet: "0x9999999999999999999999999999999999999999",
+      status: "imported",
+      activeTransportAddress: "0x8888888888888888888888888888888888888888",
+    } as Awaited<ReturnType<typeof importIdentityArtifactBundle>>);
+    vi.mocked(exportIdentityArtifactBundle).mockResolvedValue({
+      contactCardDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      bundle: {
+        contactCard: {
+          displayName: "Exported Agent",
+        },
+      },
+    } as Awaited<ReturnType<typeof exportIdentityArtifactBundle>>);
+    vi.mocked(sendCommConnectionInvite).mockResolvedValue({
+      txHash: "0xinvite",
+      contactId: "ct_route",
+      commandType: "connection_invite",
+      connectionEventType: "connection_invite",
+      connectionEventStatus: "pending",
+    } as Awaited<ReturnType<typeof sendCommConnectionInvite>>);
+    vi.mocked(sendCommConnectionAccept).mockResolvedValue({
+      txHash: "0xaccept",
+      contactId: "ct_route",
+      commandType: "connection_accept",
+      connectionEventType: "connection_accept",
+      connectionEventStatus: "applied",
+    } as Awaited<ReturnType<typeof sendCommConnectionAccept>>);
+    vi.mocked(sendCommConnectionReject).mockResolvedValue({
+      txHash: "0xreject",
+      contactId: "ct_route",
+      commandType: "connection_reject",
+      connectionEventType: "connection_reject",
+      connectionEventStatus: "applied",
+    } as Awaited<ReturnType<typeof sendCommConnectionReject>>);
+
+    const importResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/cards/import",
+      {
+        bundle: {
+          contactCard: {
+            displayName: "Imported Agent",
+          },
+        },
+        source: "api-test",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(importResponse.status).toBe(200);
+    expect(importResponse.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        contactId: "ct_imported",
+      }),
+    );
+    expect(vi.mocked(importIdentityArtifactBundle)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+      },
+      {
+        bundle: {
+          contactCard: {
+            displayName: "Imported Agent",
+          },
+        },
+        source: "api-test",
+      },
+    );
+
+    const exportResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/cards/export",
+      {
+        displayName: "Exported Agent",
+        capabilityProfile: "research-collab",
+        capabilities: ["ping", "start_discovery"],
+        expiresInDays: 30,
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(exportResponse.status).toBe(200);
+    expect(exportResponse.body).toEqual(
+      expect.objectContaining({
+        contactCardDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+    );
+    expect(vi.mocked(exportIdentityArtifactBundle)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+        vault,
+      },
+      {
+        displayName: "Exported Agent",
+        capabilityProfile: "research-collab",
+        capabilities: ["ping", "start_discovery"],
+        expiresInDays: 30,
+      },
+    );
+
+    const inviteResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/connections/invite",
+      {
+        contactId: "ct_route",
+        senderPeerId: "agent-a",
+        requestedProfile: "research-collab",
+        requestedCapabilities: ["ping", "start_discovery"],
+        note: "invite",
+        attachInlineCard: true,
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(inviteResponse.status).toBe(200);
+    expect(inviteResponse.body).toEqual(
+      expect.objectContaining({
+        txHash: "0xinvite",
+        contactId: "ct_route",
+      }),
+    );
+    expect(vi.mocked(sendCommConnectionInvite)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+        vault,
+      },
+      {
+        contactId: "ct_route",
+        senderPeerId: "agent-a",
+        requestedProfile: "research-collab",
+        requestedCapabilities: ["ping", "start_discovery"],
+        note: "invite",
+        attachInlineCard: true,
+      },
+    );
+
+    const acceptResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/connections/ct_route/accept",
+      {
+        senderPeerId: "agent-a",
+        capabilityProfile: "research-collab",
+        capabilities: ["ping", "start_discovery"],
+        note: "approved",
+        attachInlineCard: true,
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(acceptResponse.status).toBe(200);
+    expect(acceptResponse.body).toEqual(
+      expect.objectContaining({
+        txHash: "0xaccept",
+        contactId: "ct_route",
+      }),
+    );
+    expect(vi.mocked(sendCommConnectionAccept)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+        vault,
+      },
+      {
+        contactId: "ct_route",
+        senderPeerId: "agent-a",
+        capabilityProfile: "research-collab",
+        capabilities: ["ping", "start_discovery"],
+        note: "approved",
+        attachInlineCard: true,
+      },
+    );
+
+    const rejectResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/connections/ct_route/reject",
+      {
+        senderPeerId: "agent-a",
+        reason: "policy",
+        note: "not now",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(rejectResponse.status).toBe(200);
+    expect(rejectResponse.body).toEqual(
+      expect.objectContaining({
+        txHash: "0xreject",
+        contactId: "ct_route",
+      }),
+    );
+    expect(vi.mocked(sendCommConnectionReject)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+        vault,
+      },
+      {
+        contactId: "ct_route",
+        senderPeerId: "agent-a",
+        reason: "policy",
+        note: "not now",
+      },
+    );
   });
 
   it("forwards ping and start-discovery sends to the existing entrypoints", async () => {

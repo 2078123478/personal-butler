@@ -1,5 +1,11 @@
 import { getAddress, type Address } from "viem";
 import type { StateStore } from "../state-store";
+import {
+  verifySignedIdentityArtifactBundle,
+  type AgentCommSignedContactCardArtifact,
+  type AgentCommSignedIdentityArtifactBundle,
+  type AgentCommSignedTransportBindingArtifact,
+} from "./artifact-workflow";
 import { decodeEnvelope } from "./calldata-codec";
 import { decrypt, deriveSharedKey } from "./ecdh-crypto";
 import type { ShadowWallet } from "./shadow-wallet";
@@ -20,6 +26,7 @@ import type { TransactionEvent } from "./tx-listener";
 export interface InboxProcessorOptions {
   wallet: ShadowWallet;
   store: StateStore;
+  expectedChainId?: number;
 }
 
 export interface ProcessInboxResult {
@@ -68,6 +75,8 @@ function withInboxError<T>(
 }
 
 const LEGACY_PROTOCOL_V1 = "agent-comm/1";
+const UNKNOWN_INBOUND_DECRYPT_WINDOW_MS = 60_000;
+const UNKNOWN_INBOUND_DECRYPT_MAX_ATTEMPTS = 5;
 
 interface ConnectionCommandDecision {
   messageStatus: AgentMessageStatus;
@@ -75,10 +84,280 @@ interface ConnectionCommandDecision {
   contact?: AgentContact;
   eventStatus?: AgentConnectionEventStatus;
   eventReason?: string;
+  eventMetadata?: Record<string, unknown>;
+  trustOutcome?: string;
 }
 
 function dedupeStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.length > 0))];
+}
+
+function normalizeOptionalText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeOptionalStringList(values: string[] | undefined): string[] | undefined {
+  if (!values || values.length === 0) {
+    return undefined;
+  }
+  const normalized = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function toNowUnixSeconds(input: string): number | undefined {
+  const parsed = Date.parse(input);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+  return Math.floor(parsed / 1000);
+}
+
+function getInlineCardAttachment(
+  command: AgentCommand,
+): AgentCommSignedIdentityArtifactBundle | undefined {
+  switch (command.type) {
+    case "connection_invite":
+    case "connection_accept":
+    case "connection_reject":
+    case "connection_confirm":
+      return command.payload.inlineCard;
+    default:
+      return undefined;
+  }
+}
+
+function persistInlineCardContactCardArtifact(
+  store: StateStore,
+  artifact: AgentCommSignedContactCardArtifact,
+  digest: string,
+  verificationStatus: "verified" | "invalid",
+  verificationError?: string,
+): void {
+  store.upsertAgentSignedArtifact({
+    artifactType: "ContactCard",
+    digest,
+    signer: artifact.proof.signer,
+    identityWallet: artifact.identityWallet,
+    chainId: artifact.transport.chainId,
+    issuedAt: artifact.issuedAt,
+    expiresAt: artifact.expiresAt,
+    payload: {
+      cardVersion: artifact.cardVersion,
+      protocols: artifact.protocols,
+      displayName: artifact.displayName,
+      handle: artifact.handle,
+      identityWallet: artifact.identityWallet,
+      transport: artifact.transport,
+      defaults: artifact.defaults,
+      issuedAt: artifact.issuedAt,
+      expiresAt: artifact.expiresAt,
+      legacyPeerId: artifact.legacyPeerId,
+    },
+    proof: artifact.proof as unknown as Record<string, unknown>,
+    verificationStatus,
+    verificationError,
+    source: "inline_attachment",
+  });
+}
+
+function persistInlineCardTransportBindingArtifact(
+  store: StateStore,
+  artifact: AgentCommSignedTransportBindingArtifact,
+  digest: string,
+  verificationStatus: "verified" | "invalid",
+  verificationError?: string,
+): void {
+  store.upsertAgentSignedArtifact({
+    artifactType: "TransportBinding",
+    digest,
+    signer: artifact.proof.signer,
+    identityWallet: artifact.identityWallet,
+    chainId: artifact.chainId,
+    issuedAt: artifact.issuedAt,
+    expiresAt: artifact.expiresAt,
+    payload: {
+      bindingVersion: artifact.bindingVersion,
+      identityWallet: artifact.identityWallet,
+      chainId: artifact.chainId,
+      receiveAddress: artifact.receiveAddress,
+      pubkey: artifact.pubkey,
+      keyId: artifact.keyId,
+      issuedAt: artifact.issuedAt,
+      expiresAt: artifact.expiresAt,
+    },
+    proof: artifact.proof as unknown as Record<string, unknown>,
+    verificationStatus,
+    verificationError,
+    source: "inline_attachment",
+  });
+}
+
+function materializeInlineCardContact(
+  store: StateStore,
+  input: {
+    existingContact: AgentContact | null;
+    senderPeerId: string;
+    contactCard: AgentCommSignedContactCardArtifact;
+    transportBinding: AgentCommSignedTransportBindingArtifact;
+    transportBindingDigest: string;
+  },
+): AgentContact {
+  const contactCardLegacyPeerId = normalizeOptionalText(input.contactCard.legacyPeerId);
+  const contactByIdentity = store.getAgentContactByIdentityWallet(input.contactCard.identityWallet);
+  const contactByLegacyPeerId = contactCardLegacyPeerId
+    ? store.getAgentContactByLegacyPeerId(contactCardLegacyPeerId)
+    : null;
+  const existingContact = contactByIdentity ?? contactByLegacyPeerId ?? input.existingContact;
+
+  const contact = store.upsertAgentContact({
+    contactId: existingContact?.contactId,
+    identityWallet: input.contactCard.identityWallet,
+    legacyPeerId:
+      existingContact?.legacyPeerId ?? contactCardLegacyPeerId ?? normalizeOptionalText(input.senderPeerId),
+    displayName:
+      existingContact?.displayName ?? normalizeOptionalText(input.contactCard.displayName),
+    handle: existingContact?.handle ?? normalizeOptionalText(input.contactCard.handle),
+    status: existingContact?.status ?? "imported",
+    supportedProtocols:
+      normalizeOptionalStringList([
+        ...(existingContact?.supportedProtocols ?? []),
+        ...input.contactCard.protocols,
+      ]) ?? [LEGACY_PROTOCOL_V1],
+    capabilityProfile:
+      existingContact?.capabilityProfile ??
+      normalizeOptionalText(input.contactCard.defaults.capabilityProfile),
+    capabilities:
+      existingContact?.capabilities && existingContact.capabilities.length > 0
+        ? existingContact.capabilities
+        : normalizeOptionalStringList(input.contactCard.defaults.capabilities) ?? [],
+    metadata: existingContact?.metadata,
+  });
+
+  store.upsertAgentTransportEndpoint({
+    contactId: contact.contactId,
+    identityWallet: contact.identityWallet,
+    chainId: input.transportBinding.chainId,
+    receiveAddress: input.transportBinding.receiveAddress,
+    pubkey: input.transportBinding.pubkey,
+    keyId: input.transportBinding.keyId,
+    bindingDigest: input.transportBindingDigest,
+    endpointStatus: "active",
+    source: "inline_attachment",
+  });
+
+  return contact;
+}
+
+interface InlineCardAttachmentDecision {
+  contact: AgentContact | null;
+  metadata?: Record<string, unknown>;
+  rejectReason?: string;
+  trustOutcome?: string;
+}
+
+async function evaluateInlineCardAttachment(
+  store: StateStore,
+  input: {
+    command: AgentCommand;
+    existingContact: AgentContact | null;
+    senderAddress: Address;
+    senderPeerId: string;
+    expectedChainId?: number;
+    occurredAt: string;
+  },
+): Promise<InlineCardAttachmentDecision> {
+  const inlineCard = getInlineCardAttachment(input.command);
+  if (!inlineCard) {
+    return {
+      contact: input.existingContact,
+    };
+  }
+
+  const verification = await verifySignedIdentityArtifactBundle(inlineCard, {
+    expectedChainId: input.expectedChainId,
+    nowUnixSeconds: toNowUnixSeconds(input.occurredAt),
+  });
+  const verificationError =
+    verification.errors.length > 0 ? verification.errors.join("; ") : "invalid inline card";
+
+  if (verification.contactCard) {
+    persistInlineCardContactCardArtifact(
+      store,
+      verification.contactCard.artifact,
+      verification.contactCard.digest,
+      verification.contactCard.ok ? "verified" : "invalid",
+      verification.contactCard.ok ? undefined : verificationError,
+    );
+  }
+  if (verification.transportBinding) {
+    persistInlineCardTransportBindingArtifact(
+      store,
+      verification.transportBinding.artifact,
+      verification.transportBinding.digest,
+      verification.transportBinding.ok ? "verified" : "invalid",
+      verification.transportBinding.ok ? undefined : verificationError,
+    );
+  }
+
+  const baseMetadata: Record<string, unknown> = {
+    inlineCardAttached: true,
+    ...(verification.contactCard
+      ? { inlineCardContactCardDigest: verification.contactCard.digest }
+      : {}),
+    ...(verification.transportBinding
+      ? { inlineCardTransportBindingDigest: verification.transportBinding.digest }
+      : {}),
+  };
+
+  if (!verification.ok || !verification.contactCard || !verification.transportBinding) {
+    return {
+      contact: input.existingContact,
+      metadata: {
+        ...baseMetadata,
+        inlineCardStatus: "invalid",
+      },
+      rejectReason: verificationError,
+      trustOutcome: "inline_card_invalid",
+    };
+  }
+
+  const transportAddress = normalizeAddress(
+    verification.transportBinding.artifact.receiveAddress,
+    "inline card transport address",
+  );
+  if (transportAddress !== input.senderAddress) {
+    const mismatchReason =
+      "inline card transport address does not match transaction sender";
+    return {
+      contact: input.existingContact,
+      metadata: {
+        ...baseMetadata,
+        inlineCardStatus: "invalid",
+        inlineCardIdentityWallet: verification.contactCard.artifact.identityWallet,
+        inlineCardTransportAddress: verification.transportBinding.artifact.receiveAddress,
+      },
+      rejectReason: mismatchReason,
+      trustOutcome: "inline_card_sender_mismatch",
+    };
+  }
+
+  const importedContact = materializeInlineCardContact(store, {
+    existingContact: input.existingContact,
+    senderPeerId: input.senderPeerId,
+    contactCard: verification.contactCard.artifact,
+    transportBinding: verification.transportBinding.artifact,
+    transportBindingDigest: verification.transportBinding.digest,
+  });
+  return {
+    contact: importedContact,
+    metadata: {
+      ...baseMetadata,
+      inlineCardStatus: "verified",
+      inlineCardIdentityWallet: verification.contactCard.artifact.identityWallet,
+      inlineCardTransportAddress: verification.transportBinding.artifact.receiveAddress,
+    },
+  };
 }
 
 function getTrustedPeerCandidate(store: StateStore, peerId: string): AgentPeer | null {
@@ -193,6 +472,135 @@ function hasMatchingPendingOutboundInvite(store: StateStore, contact: AgentConta
   );
 }
 
+function hasMatchingPendingConnectionState(
+  store: StateStore,
+  command: AgentCommand,
+  contact: AgentContact,
+): boolean {
+  if (command.type === "connection_confirm") {
+    return contact.status === "trusted" || hasMatchingPendingOutboundInvite(store, contact);
+  }
+  return hasMatchingPendingOutboundInvite(store, contact);
+}
+
+function getPendingInviteEvent(
+  store: StateStore,
+  contactId: string,
+  direction: "inbound" | "outbound",
+) {
+  return store.listAgentConnectionEvents(1, {
+    contactId,
+    direction,
+    eventType: "connection_invite",
+    eventStatus: "pending",
+  })[0];
+}
+
+function readConnectionEventMetadataString(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readConnectionEventMetadataStringArray(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): string[] | undefined {
+  const value = metadata?.[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0))];
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function toTimestampMs(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function countRecentInboundMessagesForSender(
+  store: StateStore,
+  senderAddress: Address,
+  eventTimestampMs: number,
+): number {
+  const normalizedSender = senderAddress.toLowerCase();
+  const windowStartMs = eventTimestampMs - UNKNOWN_INBOUND_DECRYPT_WINDOW_MS;
+  return store
+    .listAgentMessages(1000, {
+      direction: "inbound",
+    })
+    .filter((message) => message.transportAddress?.toLowerCase() === normalizedSender)
+    .filter((message) => {
+      const messageTimestampMs = toTimestampMs(message.receivedAt ?? message.createdAt);
+      return messageTimestampMs !== null && messageTimestampMs >= windowStartMs;
+    }).length;
+}
+
+function enforceUnknownInboundRateLimit(
+  store: StateStore,
+  senderAddress: Address,
+  eventTimestamp: string,
+): void {
+  const eventTimestampMs = toTimestampMs(eventTimestamp) ?? Date.now();
+  const recentCount = countRecentInboundMessagesForSender(store, senderAddress, eventTimestampMs);
+  if (recentCount < UNKNOWN_INBOUND_DECRYPT_MAX_ATTEMPTS) {
+    return;
+  }
+
+  throw new InboxProcessingError(
+    "UNKNOWN_INBOUND_RATE_LIMITED",
+    "Unknown inbound decrypt path rate limit exceeded",
+    {
+      senderAddress,
+      recentCount,
+      windowMs: UNKNOWN_INBOUND_DECRYPT_WINDOW_MS,
+    },
+  );
+}
+
+function extractConnectionEventMetadata(command: AgentCommand): Record<string, unknown> {
+  if (!isConnectionCommandType(command.type)) {
+    return {};
+  }
+
+  switch (command.type) {
+    case "connection_invite":
+      return {
+        ...(command.payload.requestedProfile
+          ? { requestedProfile: command.payload.requestedProfile }
+          : {}),
+        ...(command.payload.requestedCapabilities
+          ? { requestedCapabilities: command.payload.requestedCapabilities }
+          : {}),
+        ...(command.payload.note ? { note: command.payload.note } : {}),
+      };
+    case "connection_accept":
+      return {
+        ...(command.payload.capabilityProfile
+          ? { capabilityProfile: command.payload.capabilityProfile }
+          : {}),
+        ...(command.payload.capabilities ? { capabilities: command.payload.capabilities } : {}),
+        ...(command.payload.note ? { note: command.payload.note } : {}),
+      };
+    case "connection_reject":
+      return {
+        ...(command.payload.reason ? { reason: command.payload.reason } : {}),
+        ...(command.payload.note ? { note: command.payload.note } : {}),
+      };
+    case "connection_confirm":
+      return {
+        ...(command.payload.note ? { note: command.payload.note } : {}),
+      };
+  }
+}
+
 function resolveInboundMessagePeerId(input: {
   trustedPeer?: AgentPeer | null;
   contact?: AgentContact;
@@ -214,6 +622,11 @@ function persistInboundMessage(
     nonce: string;
     txHash: string;
     commandType: AgentCommand["type"];
+    envelopeVersion: number;
+    contactId?: string;
+    identityWallet?: string;
+    transportAddress: string;
+    trustOutcome?: string;
     ciphertext: string;
     sentAt: string;
     receivedAt: string;
@@ -233,6 +646,11 @@ function persistInboundMessage(
       txHash: input.txHash,
       nonce: input.nonce,
       commandType: input.commandType,
+      envelopeVersion: input.envelopeVersion,
+      contactId: input.contactId,
+      identityWallet: input.identityWallet,
+      transportAddress: input.transportAddress,
+      trustOutcome: input.trustOutcome,
       ciphertext: input.ciphertext,
       status: input.status,
       error: input.error,
@@ -253,33 +671,66 @@ function persistInboundMessage(
   }
 }
 
-function evaluateConnectionCommand(
+async function evaluateConnectionCommand(
   store: StateStore,
   command: AgentCommand,
   contact: AgentContact | null,
   senderAddress: Address,
   senderPeerId: string,
-): ConnectionCommandDecision {
+  expectedChainId: number | undefined,
+  occurredAt: string,
+): Promise<ConnectionCommandDecision> {
+  const inlineCardDecision = await evaluateInlineCardAttachment(store, {
+    command,
+    existingContact: contact,
+    senderAddress,
+    senderPeerId,
+    expectedChainId,
+    occurredAt,
+  });
+  const resolvedContact = inlineCardDecision.contact;
+  const eventMetadata = {
+    ...extractConnectionEventMetadata(command),
+    ...(inlineCardDecision.metadata ?? {}),
+  };
+
   if (!isConnectionCommandType(command.type)) {
     return {
       messageStatus: "rejected",
       messageError: `unsupported control-plane command: ${command.type}`,
-      contact: contact ?? undefined,
+      contact: resolvedContact ?? undefined,
       eventStatus: "rejected",
+      eventMetadata,
+      trustOutcome: "unsupported_control_plane",
+    };
+  }
+
+  if (inlineCardDecision.rejectReason) {
+    return {
+      messageStatus: "rejected",
+      messageError: `${command.type} rejected: ${inlineCardDecision.rejectReason}`,
+      contact: resolvedContact ?? undefined,
+      eventStatus: "rejected",
+      eventReason: "invalid_inline_card",
+      eventMetadata,
+      trustOutcome: inlineCardDecision.trustOutcome ?? "inline_card_invalid",
     };
   }
 
   if (command.type === "connection_invite") {
-    const inviteContact = contact
+    const inviteContact = resolvedContact
       ? store.upsertAgentContact({
-          contactId: contact.contactId,
-          identityWallet: contact.identityWallet,
-          legacyPeerId: contact.legacyPeerId ?? senderPeerId,
-          status: contact.status === "trusted" ? "trusted" : "pending_inbound",
-          supportedProtocols: dedupeStrings([...contact.supportedProtocols, LEGACY_PROTOCOL_V1]),
-          capabilityProfile: contact.capabilityProfile,
-          capabilities: contact.capabilities,
-          metadata: contact.metadata,
+          contactId: resolvedContact.contactId,
+          identityWallet: resolvedContact.identityWallet,
+          legacyPeerId: resolvedContact.legacyPeerId ?? senderPeerId,
+          status: resolvedContact.status === "trusted" ? "trusted" : "pending_inbound",
+          supportedProtocols: dedupeStrings([
+            ...resolvedContact.supportedProtocols,
+            LEGACY_PROTOCOL_V1,
+          ]),
+          capabilityProfile: resolvedContact.capabilityProfile,
+          capabilities: resolvedContact.capabilities,
+          metadata: resolvedContact.metadata,
         })
       : store.upsertAgentContact({
           identityWallet: senderAddress,
@@ -296,6 +747,8 @@ function evaluateConnectionCommand(
         contact: inviteContact,
         eventStatus: "ignored",
         eventReason: `contact_${inviteContact.status}`,
+        eventMetadata,
+        trustOutcome: `contact_${inviteContact.status}`,
       };
     }
 
@@ -303,90 +756,127 @@ function evaluateConnectionCommand(
       messageStatus: "received",
       contact: inviteContact,
       eventStatus: "pending",
+      eventMetadata,
+      trustOutcome: "pending_inbound",
     };
   }
 
-  if (!contact) {
+  if (!resolvedContact) {
     return {
       messageStatus: "rejected",
       messageError: `${command.type} rejected: no matching contact`,
       eventStatus: "rejected",
+      eventMetadata,
+      trustOutcome: "missing_contact",
     };
   }
 
-  if (!hasMatchingPendingOutboundInvite(store, contact)) {
+  if (!hasMatchingPendingConnectionState(store, command, resolvedContact)) {
     return {
       messageStatus: "rejected",
-      messageError: `${command.type} rejected: no matching pending outbound invite`,
-      contact,
+      messageError:
+        command.type === "connection_confirm"
+          ? `${command.type} rejected: no matching pending connection state`
+          : `${command.type} rejected: no matching pending outbound invite`,
+      contact: resolvedContact,
       eventStatus: "rejected",
-      eventReason: "missing_pending_outbound_invite",
+      eventReason:
+        command.type === "connection_confirm"
+          ? "missing_pending_connection_state"
+          : "missing_pending_outbound_invite",
+      eventMetadata,
+      trustOutcome:
+        command.type === "connection_confirm"
+          ? "missing_pending_connection_state"
+          : "missing_pending_outbound_invite",
     };
   }
 
-  if (contact.status === "blocked" || contact.status === "revoked") {
+  if (resolvedContact.status === "blocked" || resolvedContact.status === "revoked") {
     return {
       messageStatus: "rejected",
-      messageError: `${command.type} rejected for ${contact.status} contact`,
-      contact,
+      messageError: `${command.type} rejected for ${resolvedContact.status} contact`,
+      contact: resolvedContact,
       eventStatus: "ignored",
-      eventReason: `contact_${contact.status}`,
+      eventReason: `contact_${resolvedContact.status}`,
+      eventMetadata,
+      trustOutcome: `contact_${resolvedContact.status}`,
     };
   }
 
   if (command.type === "connection_accept") {
+    const pendingInvite = getPendingInviteEvent(store, resolvedContact.contactId, "outbound");
+    const grantedCapabilityProfile =
+      command.payload.capabilityProfile ??
+      readConnectionEventMetadataString(pendingInvite?.metadata, "requestedProfile") ??
+      resolvedContact.capabilityProfile;
+    const grantedCapabilities =
+      command.payload.capabilities ??
+      readConnectionEventMetadataStringArray(pendingInvite?.metadata, "requestedCapabilities") ??
+      resolvedContact.capabilities;
     const acceptedContact = store.upsertAgentContact({
-      contactId: contact.contactId,
-      identityWallet: contact.identityWallet,
-      legacyPeerId: contact.legacyPeerId,
+      contactId: resolvedContact.contactId,
+      identityWallet: resolvedContact.identityWallet,
+      legacyPeerId: resolvedContact.legacyPeerId,
       status: "trusted",
-      supportedProtocols: dedupeStrings([...contact.supportedProtocols, LEGACY_PROTOCOL_V1]),
-      capabilityProfile: command.payload.capabilityProfile ?? contact.capabilityProfile,
-      capabilities: command.payload.capabilities ?? contact.capabilities,
-      metadata: contact.metadata,
+      supportedProtocols: dedupeStrings([...resolvedContact.supportedProtocols, LEGACY_PROTOCOL_V1]),
+      capabilityProfile: grantedCapabilityProfile,
+      capabilities: grantedCapabilities,
+      metadata: resolvedContact.metadata,
     });
     return {
       messageStatus: "received",
       contact: acceptedContact,
       eventStatus: "applied",
       eventReason: command.payload.note,
+      eventMetadata: {
+        ...eventMetadata,
+        ...(grantedCapabilityProfile ? { capabilityProfile: grantedCapabilityProfile } : {}),
+        capabilities: grantedCapabilities,
+      },
+      trustOutcome: "trusted",
     };
   }
 
   if (command.type === "connection_reject") {
     const rejectedContact = store.upsertAgentContact({
-      contactId: contact.contactId,
-      identityWallet: contact.identityWallet,
-      legacyPeerId: contact.legacyPeerId,
+      contactId: resolvedContact.contactId,
+      identityWallet: resolvedContact.identityWallet,
+      legacyPeerId: resolvedContact.legacyPeerId,
       status: "imported",
-      supportedProtocols: dedupeStrings([...contact.supportedProtocols, LEGACY_PROTOCOL_V1]),
-      capabilityProfile: contact.capabilityProfile,
-      capabilities: contact.capabilities,
-      metadata: contact.metadata,
+      supportedProtocols: dedupeStrings([...resolvedContact.supportedProtocols, LEGACY_PROTOCOL_V1]),
+      capabilityProfile: resolvedContact.capabilityProfile,
+      capabilities: resolvedContact.capabilities,
+      metadata: resolvedContact.metadata,
     });
     return {
       messageStatus: "received",
       contact: rejectedContact,
       eventStatus: "applied",
       eventReason: command.payload.reason ?? command.payload.note,
+      eventMetadata,
+      trustOutcome: "rejected",
     };
   }
 
   const confirmedContact = store.upsertAgentContact({
-    contactId: contact.contactId,
-    identityWallet: contact.identityWallet,
-    legacyPeerId: contact.legacyPeerId,
+    contactId: resolvedContact.contactId,
+    identityWallet: resolvedContact.identityWallet,
+    legacyPeerId: resolvedContact.legacyPeerId,
     status: "trusted",
-    supportedProtocols: dedupeStrings([...contact.supportedProtocols, LEGACY_PROTOCOL_V1]),
-    capabilityProfile: contact.capabilityProfile,
-    capabilities: contact.capabilities,
-    metadata: contact.metadata,
+    supportedProtocols: dedupeStrings([...resolvedContact.supportedProtocols, LEGACY_PROTOCOL_V1]),
+    capabilityProfile: resolvedContact.capabilityProfile,
+    capabilities: resolvedContact.capabilities,
+    metadata: resolvedContact.metadata,
   });
+  const confirmNote = command.type === "connection_confirm" ? command.payload.note : undefined;
   return {
     messageStatus: "received",
     contact: confirmedContact,
     eventStatus: "applied",
-    eventReason: command.payload.note,
+    eventReason: confirmNote,
+    eventMetadata,
+    trustOutcome: "trusted",
   };
 }
 
@@ -424,6 +914,12 @@ export async function processInbox(
   if (trustedPeer) {
     assertTrustedPeerSenderBinding(trustedPeer, event, senderAddress, envelope.senderPubkey);
   }
+  const senderContact = trustedPeer
+    ? ensureTrustedPeerContact(options.store, trustedPeer)
+    : resolveContactForSender(options.store, senderAddress, event.from, envelope.senderPeerId);
+  if (!trustedPeer && senderContact?.status !== "trusted") {
+    enforceUnknownInboundRateLimit(options.store, senderAddress, event.timestamp);
+  }
 
   const sharedKey = withInboxError(
     "ECDH_DERIVE_FAILED",
@@ -457,6 +953,11 @@ export async function processInbox(
       txHash: event.txHash,
       nonce: envelope.nonce,
       commandType: command.type,
+      envelopeVersion: envelope.version,
+      contactId: senderContact?.contactId,
+      identityWallet: senderContact?.identityWallet,
+      transportAddress: senderAddress,
+      trustOutcome: "trusted_sender",
       ciphertext: envelope.ciphertext,
       status: "decrypted",
       sentAt: envelope.timestamp,
@@ -468,19 +969,20 @@ export async function processInbox(
     };
   }
 
-  const senderContact = trustedPeer
-    ? ensureTrustedPeerContact(options.store, trustedPeer)
-    : resolveContactForSender(options.store, senderAddress, event.from, envelope.senderPeerId);
-
   if (!trustedPeer && isBusinessCommandType(command.type)) {
     const message = persistInboundMessage(options.store, {
       peerId: resolveInboundMessagePeerId({
-        contact: senderContact,
+        contact: senderContact ?? undefined,
         senderAddress,
       }),
       txHash: event.txHash,
       nonce: envelope.nonce,
       commandType: command.type,
+      envelopeVersion: envelope.version,
+      contactId: senderContact?.contactId,
+      identityWallet: senderContact?.identityWallet,
+      transportAddress: senderAddress,
+      trustOutcome: "unknown_business_rejected",
       ciphertext: envelope.ciphertext,
       status: "rejected",
       error: `unknown business command rejected for untrusted sender: ${command.type}`,
@@ -493,12 +995,14 @@ export async function processInbox(
     };
   }
 
-  const controlPlaneDecision = evaluateConnectionCommand(
+  const controlPlaneDecision = await evaluateConnectionCommand(
     options.store,
     command,
     senderContact,
     senderAddress,
     envelope.senderPeerId,
+    options.expectedChainId,
+    event.timestamp,
   );
   const message = persistInboundMessage(options.store, {
     peerId: resolveInboundMessagePeerId({
@@ -509,6 +1013,11 @@ export async function processInbox(
     txHash: event.txHash,
     nonce: envelope.nonce,
     commandType: command.type,
+    envelopeVersion: envelope.version,
+    contactId: controlPlaneDecision.contact?.contactId ?? senderContact?.contactId,
+    identityWallet: controlPlaneDecision.contact?.identityWallet ?? senderContact?.identityWallet,
+    transportAddress: senderAddress,
+    trustOutcome: controlPlaneDecision.trustOutcome,
     ciphertext: envelope.ciphertext,
     status: controlPlaneDecision.messageStatus,
     error: controlPlaneDecision.messageError,
@@ -536,6 +1045,7 @@ export async function processInbox(
       reason: controlPlaneDecision.eventReason ?? controlPlaneDecision.messageError,
       occurredAt: event.timestamp,
       metadata: {
+        ...(controlPlaneDecision.eventMetadata ?? {}),
         senderPeerId: envelope.senderPeerId,
         trustedSender: Boolean(trustedPeer),
         envelopeVersion: envelope.version,

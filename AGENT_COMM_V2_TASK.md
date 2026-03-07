@@ -66,20 +66,20 @@ Exit criteria:
 
 Tasks:
 
-- [ ] `[Core]` Confirm the two remaining policy defaults from the draft:
+- [x] `[Core]` Confirm the two remaining policy defaults from the draft:
   - valid inbound `connection_invite` default behavior: `auto-accept` vs lightweight accept flow
   - initial `coldInboundNotifyThreshold` rule and asset normalization strategy
-- [ ] `[Core]` Freeze the canonical `EIP-712` typed-data definitions for:
+- [x] `[Core]` Freeze the canonical `EIP-712` typed-data definitions for:
   - `ContactCard`
   - `TransportBinding`
   - `RevocationNotice`
-- [ ] `[Core]` Define how artifact digests and short fingerprints are computed so CLI/API/UI all show the same identity proof summary.
-- [ ] `[Core]` Freeze the v2 envelope/body field contract:
+- [x] `[Core]` Define how artifact digests and short fingerprints are computed so CLI/API/UI all show the same identity proof summary.
+- [x] `[Core]` Freeze the v2 envelope/body field contract:
   - outer plaintext stays `version + kex + ciphertext`
   - `command.type` stays encrypted
   - `tx.to` remains authoritative recipient routing
   - no per-message off-chain signature is added back
-- [ ] `[Core]` Freeze migration rules:
+- [x] `[Core]` Freeze migration rules:
   - additive schema only
   - v1 parser remains live
   - `agent-comm:peer:trust` remains available as legacy/manual fallback
@@ -210,37 +210,37 @@ Exit criteria:
 
 Tasks:
 
-- [ ] `[Core]` Extend command schemas with:
+- [x] `[Core]` Extend command schemas with:
   - `connection_invite`
   - `connection_accept`
   - `connection_reject`
   - `connection_confirm`
-- [ ] `[Core]` Add capability-profile handling so trust records store both:
+- [x] `[Core]` Add capability-profile handling so trust records store both:
   - named profile
   - explicit granted capability snapshot
-- [ ] `[Core]` Implement the contact-state machine:
+- [x] `[Core]` Implement the contact-state machine:
   - `imported`
   - `pending_inbound`
   - `pending_outbound`
   - `trusted`
   - `blocked`
   - `revoked`
-- [ ] `[Core]` Implement inbound invite processing rules:
+- [x] `[Core]` Implement inbound invite processing rules:
   - allow `connection_invite` into a bounded pre-trust path
   - allow `connection_accept` / `reject` / `confirm` only when matching pending state exists
   - reject unknown business commands before business routing
-- [ ] `[Core]` Add rate limiting and message-size guards around the unknown-inbound decrypt path.
-- [ ] `[Core]` Persist trust outcomes and reject reasons for audit/support visibility.
-- [ ] `[Core]` Support inline card attachment for invite/bootstrap and key-refresh scenarios.
-- [ ] `[Core]` Add CLI commands:
+- [x] `[Core]` Add rate limiting and message-size guards around the unknown-inbound decrypt path.
+- [x] `[Core]` Persist trust outcomes and reject reasons for audit/support visibility.
+- [x] `[Core]` Support inline card attachment for invite/bootstrap and key-refresh scenarios.
+- [x] `[Core]` Add CLI commands:
   - `agent-comm:card:export`
   - `agent-comm:card:import <file|url>`
   - `agent-comm:contacts:list`
   - `agent-comm:connect:invite <contactRef>`
   - `agent-comm:connect:accept <contactRef>`
   - `agent-comm:connect:reject <contactRef>`
-- [ ] `[Core]` Keep `agent-comm:peer:trust` available, but mark it as legacy/manual in help text and docs.
-- [ ] `[Core]` Add HTTP routes:
+- [x] `[Core]` Keep `agent-comm:peer:trust` available, but mark it as legacy/manual in help text and docs.
+- [x] `[Core]` Add HTTP routes:
   - `GET /api/v1/agent-comm/contacts`
   - `POST /api/v1/agent-comm/cards/import`
   - `POST /api/v1/agent-comm/cards/export`
@@ -248,7 +248,7 @@ Tasks:
   - `POST /api/v1/agent-comm/connections/invite`
   - `POST /api/v1/agent-comm/connections/:contactId/accept`
   - `POST /api/v1/agent-comm/connections/:contactId/reject`
-- [ ] `[Core]` Update status/list surfaces to show minimal contact-first product state:
+- [x] `[Core]` Update status/list surfaces to show minimal contact-first product state:
   - contact status
   - signer fingerprint
   - capability profile

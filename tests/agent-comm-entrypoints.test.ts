@@ -16,6 +16,7 @@ import {
   listLocalIdentityProfiles,
   registerTrustedPeerEntry,
   sendCommConnectionAccept,
+  sendCommConnectionConfirm,
   sendCommConnectionInvite,
   sendCommConnectionReject,
   sendCommPing,
@@ -132,6 +133,10 @@ describe("agent-comm entrypoints", () => {
       },
     );
     expect(imported.ok).toBe(true);
+    expect(imported.contactId).toBeDefined();
+    expect(imported.identityWallet).toBe(exported.identity.address);
+    expect(imported.status).toBe("imported");
+    expect(imported.activeTransportAddress).toBe(exported.identity.address);
 
     const profiles = listLocalIdentityProfiles(deps, {
       masterPassword: "pass123",
@@ -140,6 +145,25 @@ describe("agent-comm entrypoints", () => {
       exported.transportBindingDigest,
     );
     expect(deps.store.listAgentSignedArtifacts(10)).toHaveLength(2);
+    expect(deps.store.getAgentContact(imported.contactId ?? "")).toEqual(
+      expect.objectContaining({
+        contactId: imported.contactId,
+        identityWallet: exported.identity.address,
+        status: "imported",
+      }),
+    );
+    expect(
+      deps.store.listAgentTransportEndpoints(10, {
+        contactId: imported.contactId,
+        endpointStatus: "active",
+      })[0],
+    ).toEqual(
+      expect.objectContaining({
+        contactId: imported.contactId,
+        receiveAddress: exported.identity.address,
+        bindingDigest: exported.transportBindingDigest,
+      }),
+    );
   });
 
   it("classifies artifact import failures with explicit reason codes", async () => {
@@ -188,6 +212,7 @@ describe("agent-comm entrypoints", () => {
         "malformed_transport_binding",
       ]),
     );
+    expect(deps.store.listAgentContacts(10)).toHaveLength(0);
   });
 
   it("returns invalid_artifact when importing malformed artifact JSON", async () => {
@@ -558,6 +583,275 @@ describe("agent-comm entrypoints", () => {
     expect(events[0]?.eventStatus).toBe("applied");
   });
 
+  it("attaches an inline card bundle on connection_invite when requested", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    const localPrivateKey =
+      "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const peerWallet = restoreShadowWallet(
+      "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+    );
+
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: localPrivateKey,
+    });
+    const contact = deps.store.upsertAgentContact({
+      identityWallet: peerWallet.getAddress(),
+      legacyPeerId: "peer-inline-invite",
+      status: "imported",
+      supportedProtocols: ["agent-comm/2"],
+      capabilities: [],
+    });
+    deps.store.upsertAgentTransportEndpoint({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      chainId: 196,
+      receiveAddress: peerWallet.getAddress(),
+      pubkey: peerWallet.getPublicKey(),
+      keyId: "rk_peer_inline_invite",
+      endpointStatus: "active",
+      source: "unit-test",
+    });
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+      getTransactionCount: vi.fn(async () => 25),
+    });
+    const sendTransaction = vi.fn(async (_request: { data: string }) => "0xtx-inline-invite");
+    createWalletClientMock.mockReturnValue({
+      sendTransaction,
+    });
+
+    await sendCommConnectionInvite(deps, {
+      masterPassword: "pass123",
+      contactId: contact.contactId,
+      requestedProfile: "research-collab",
+      requestedCapabilities: ["ping"],
+      note: "invite with inline card",
+      attachInlineCard: true,
+    });
+
+    const request = sendTransaction.mock.calls[0]?.[0] as { data: string };
+    const envelope = decodeEnvelope(request.data);
+    const sharedKey = deriveSharedKey(
+      peerWallet.privateKey,
+      getCommIdentity(deps, { masterPassword: "pass123" }).pubkey,
+    );
+    const plaintext = JSON.parse(decrypt(envelope.ciphertext, sharedKey)) as {
+      type: string;
+      payload: Record<string, unknown>;
+    };
+
+    expect(plaintext.type).toBe("connection_invite");
+    const inlineCard = plaintext.payload.inlineCard as {
+      bundleVersion: number;
+      contactCard: { identityWallet: string; legacyPeerId: string };
+      transportBinding: { receiveAddress: string };
+    };
+    expect(inlineCard.bundleVersion).toBe(1);
+    expect(inlineCard.contactCard.identityWallet).toBe(
+      getCommIdentity(deps, { masterPassword: "pass123" }).address,
+    );
+    expect(inlineCard.contactCard.legacyPeerId).toBe("agent-comm");
+    expect(inlineCard.transportBinding.receiveAddress).toBe(
+      getCommIdentity(deps, { masterPassword: "pass123" }).address,
+    );
+
+    const outboundInvite = deps.store.listAgentConnectionEvents(10, {
+      contactId: contact.contactId,
+      direction: "outbound",
+      eventType: "connection_invite",
+    })[0];
+    expect(outboundInvite?.metadata).toEqual(
+      expect.objectContaining({
+        inlineCardContactCardDigest: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+        inlineCardTransportBindingDigest: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+      }),
+    );
+  });
+
+  it("derives connection_accept capability grants from the pending invite when options omit them", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    const localPrivateKey =
+      "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const peerWallet = restoreShadowWallet(
+      "0x7777777777777777777777777777777777777777777777777777777777777777",
+    );
+
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: localPrivateKey,
+    });
+    const contact = deps.store.upsertAgentContact({
+      identityWallet: peerWallet.getAddress(),
+      legacyPeerId: "peer-accept-derived",
+      status: "pending_inbound",
+      supportedProtocols: ["agent-comm/2"],
+      capabilities: [],
+    });
+    deps.store.upsertAgentTransportEndpoint({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      chainId: 196,
+      receiveAddress: peerWallet.getAddress(),
+      pubkey: peerWallet.getPublicKey(),
+      keyId: "rk_peer_accept_derived",
+      endpointStatus: "active",
+      source: "unit-test",
+    });
+    deps.store.upsertAgentConnectionEvent({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      direction: "inbound",
+      eventType: "connection_invite",
+      eventStatus: "pending",
+      messageId: "inbound-invite-derive-1",
+      txHash: "0xinvite-derive",
+      occurredAt: "2026-03-07T00:00:00.000Z",
+      metadata: {
+        requestedProfile: "research-collab",
+        requestedCapabilities: ["ping", "start_discovery"],
+      },
+    });
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+      getTransactionCount: vi.fn(async () => 11),
+    });
+    const sendTransaction = vi.fn(async (_request: { data: string }) => "0xtx-accept-derived");
+    createWalletClientMock.mockReturnValue({
+      sendTransaction,
+    });
+
+    const result = await sendCommConnectionAccept(deps, {
+      masterPassword: "pass123",
+      contactId: contact.contactId,
+      note: "approved",
+    });
+
+    const request = sendTransaction.mock.calls[0]?.[0] as { data: string };
+    const envelope = decodeEnvelope(request.data);
+    const sharedKey = deriveSharedKey(
+      peerWallet.privateKey,
+      getCommIdentity(deps, { masterPassword: "pass123" }).pubkey,
+    );
+    const plaintext = JSON.parse(decrypt(envelope.ciphertext, sharedKey)) as {
+      type: string;
+      payload: Record<string, unknown>;
+    };
+
+    expect(result.contactStatus).toBe("trusted");
+    expect(plaintext).toEqual({
+      type: "connection_accept",
+      payload: {
+        capabilityProfile: "research-collab",
+        capabilities: ["ping", "start_discovery"],
+        note: "approved",
+      },
+    });
+
+    const updatedContact = deps.store.getAgentContact(contact.contactId);
+    expect(updatedContact?.capabilityProfile).toBe("research-collab");
+    expect(updatedContact?.capabilities).toEqual(["ping", "start_discovery"]);
+
+    const events = deps.store.listAgentConnectionEvents(10, {
+      contactId: contact.contactId,
+      direction: "outbound",
+      eventType: "connection_accept",
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.metadata).toEqual({
+      capabilityProfile: "research-collab",
+      capabilities: ["ping", "start_discovery"],
+      senderPeerId: "agent-comm",
+    });
+  });
+
+  it("sends connection_confirm, persists the outbound event, and leaves the contact trusted", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    const localPrivateKey =
+      "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const peerWallet = restoreShadowWallet(
+      "0x9999999999999999999999999999999999999999999999999999999999999999",
+    );
+
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: localPrivateKey,
+    });
+    const contact = deps.store.upsertAgentContact({
+      identityWallet: peerWallet.getAddress(),
+      legacyPeerId: "peer-confirm",
+      status: "pending_outbound",
+      supportedProtocols: ["agent-comm/2"],
+      capabilities: ["ping"],
+    });
+    deps.store.upsertAgentTransportEndpoint({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      chainId: 196,
+      receiveAddress: peerWallet.getAddress(),
+      pubkey: peerWallet.getPublicKey(),
+      keyId: "rk_peer_confirm",
+      endpointStatus: "active",
+      source: "unit-test",
+    });
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+      getTransactionCount: vi.fn(async () => 12),
+    });
+    const sendTransaction = vi.fn(async (_request: { data: string }) => "0xtx-confirm");
+    createWalletClientMock.mockReturnValue({
+      sendTransaction,
+    });
+
+    const result = await sendCommConnectionConfirm(deps, {
+      masterPassword: "pass123",
+      contactId: contact.contactId,
+      note: "confirmed",
+    });
+
+    const requestCall = sendTransaction.mock.calls[0];
+    expect(requestCall).toBeDefined();
+    const request = requestCall?.[0] as unknown as { data: string };
+    const envelope = decodeEnvelope(request.data);
+    const sharedKey = deriveSharedKey(
+      peerWallet.privateKey,
+      getCommIdentity(deps, { masterPassword: "pass123" }).pubkey,
+    );
+    const plaintext = JSON.parse(decrypt(envelope.ciphertext, sharedKey)) as {
+      type: string;
+      payload: Record<string, unknown>;
+    };
+
+    expect(result.txHash).toBe("0xtx-confirm");
+    expect(result.commandType).toBe("connection_confirm");
+    expect(result.contactStatus).toBe("trusted");
+    expect(result.connectionEventType).toBe("connection_confirm");
+    expect(result.connectionEventStatus).toBe("applied");
+    expect(plaintext).toEqual({
+      type: "connection_confirm",
+      payload: {
+        note: "confirmed",
+      },
+    });
+
+    const updatedContact = deps.store.getAgentContact(contact.contactId);
+    expect(updatedContact?.status).toBe("trusted");
+    expect(updatedContact?.capabilities).toEqual(["ping"]);
+    const message = deps.store.findAgentMessage("peer-confirm", "outbound", result.nonce);
+    const events = deps.store.listAgentConnectionEvents(10, {
+      contactId: contact.contactId,
+      direction: "outbound",
+      eventType: "connection_confirm",
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventStatus).toBe("applied");
+    expect(events[0]?.messageId).toBe(message?.id);
+    expect(events[0]?.reason).toBe("confirmed");
+  });
+
   it("sends connection_reject and returns contact to imported", async () => {
     const deps = createDeps("alphaos-comm-entry-");
     const localPrivateKey =
@@ -642,6 +936,88 @@ describe("agent-comm entrypoints", () => {
     expect(events[0]?.reason).toBe("policy");
   });
 
+  it("attaches an inline card bundle on connection_confirm when requested", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    const localPrivateKey =
+      "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const peerWallet = restoreShadowWallet(
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: localPrivateKey,
+    });
+    const contact = deps.store.upsertAgentContact({
+      identityWallet: peerWallet.getAddress(),
+      legacyPeerId: "peer-confirm-inline",
+      status: "trusted",
+      supportedProtocols: ["agent-comm/2"],
+      capabilities: ["ping"],
+    });
+    deps.store.upsertAgentTransportEndpoint({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      chainId: 196,
+      receiveAddress: peerWallet.getAddress(),
+      pubkey: peerWallet.getPublicKey(),
+      keyId: "rk_peer_confirm_inline",
+      endpointStatus: "active",
+      source: "unit-test",
+    });
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+      getTransactionCount: vi.fn(async () => 29),
+    });
+    const sendTransaction = vi.fn(async (_request: { data: string }) => "0xtx-confirm-inline");
+    createWalletClientMock.mockReturnValue({
+      sendTransaction,
+    });
+
+    await sendCommConnectionConfirm(deps, {
+      masterPassword: "pass123",
+      contactId: contact.contactId,
+      note: "confirmed with inline card",
+      attachInlineCard: true,
+    });
+
+    const request = sendTransaction.mock.calls[0]?.[0] as { data: string };
+    const envelope = decodeEnvelope(request.data);
+    const sharedKey = deriveSharedKey(
+      peerWallet.privateKey,
+      getCommIdentity(deps, { masterPassword: "pass123" }).pubkey,
+    );
+    const plaintext = JSON.parse(decrypt(envelope.ciphertext, sharedKey)) as {
+      type: string;
+      payload: Record<string, unknown>;
+    };
+    expect(plaintext.type).toBe("connection_confirm");
+    expect(plaintext.payload).toEqual(
+      expect.objectContaining({
+        note: "confirmed with inline card",
+        inlineCard: expect.objectContaining({
+          bundleVersion: 1,
+          contactCard: expect.objectContaining({
+            identityWallet: getCommIdentity(deps, { masterPassword: "pass123" }).address,
+          }),
+        }),
+      }),
+    );
+
+    const outboundConfirm = deps.store.listAgentConnectionEvents(10, {
+      contactId: contact.contactId,
+      direction: "outbound",
+      eventType: "connection_confirm",
+    })[0];
+    expect(outboundConfirm?.metadata).toEqual(
+      expect.objectContaining({
+        inlineCardContactCardDigest: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+        inlineCardTransportBindingDigest: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+      }),
+    );
+  });
+
   it("requires pending_inbound status before sending connection_accept", async () => {
     const deps = createDeps("alphaos-comm-entry-");
     const peerWallet = restoreShadowWallet(
@@ -675,5 +1051,40 @@ describe("agent-comm entrypoints", () => {
         contactId: contact.contactId,
       }),
     ).rejects.toThrow("expected status pending_inbound");
+  });
+
+  it("requires trusted or pending_outbound status before sending connection_confirm", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    const peerWallet = restoreShadowWallet(
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    });
+    const contact = deps.store.upsertAgentContact({
+      identityWallet: peerWallet.getAddress(),
+      status: "pending_inbound",
+      supportedProtocols: ["agent-comm/2"],
+      capabilities: [],
+    });
+    deps.store.upsertAgentTransportEndpoint({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      chainId: 196,
+      receiveAddress: peerWallet.getAddress(),
+      pubkey: peerWallet.getPublicKey(),
+      keyId: "rk_peer_confirm_fail",
+      endpointStatus: "active",
+      source: "unit-test",
+    });
+
+    await expect(
+      sendCommConnectionConfirm(deps, {
+        masterPassword: "pass123",
+        contactId: contact.contactId,
+      }),
+    ).rejects.toThrow("expected status trusted or pending_outbound");
   });
 });
