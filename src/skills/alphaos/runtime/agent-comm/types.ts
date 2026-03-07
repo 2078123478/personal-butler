@@ -34,6 +34,10 @@ export const agentMessageStatuses = [
   "failed",
 ] as const;
 export const agentMessageReceiptTypes = ["ack", "status", "execution", "error", "x402"] as const;
+export const agentLocalIdentityRoles = ["liw", "acw", "temporary_demo"] as const;
+export const agentLocalIdentityModes = ["standard", "temporary_dual_use"] as const;
+export const agentSignedArtifactTypes = ["ContactCard", "TransportBinding", "RevocationNotice"] as const;
+export const agentSignedArtifactVerificationStatuses = ["verified", "invalid"] as const;
 export const commListenerModes = ["disabled", "poll", "ws"] as const;
 export const x402Modes = ["disabled", "observe", "enforce"] as const;
 
@@ -54,12 +58,20 @@ type _DiscoveryStrategyMatches = Assert<
 export const jsonObjectSchema = z.record(z.string(), z.unknown());
 export const executionModeSchema = z.enum(executionModes);
 const discoveryStrategyIdSchema = z.enum(discoveryStrategyIds);
+const evmAddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/, "expected EVM address");
+const bytes32HexSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "expected bytes32 hex");
 
 export const agentCommandTypeSchema = z.enum(agentCommandTypes);
 export const agentPeerStatusSchema = z.enum(agentPeerStatuses);
 export const agentMessageDirectionSchema = z.enum(agentMessageDirections);
 export const agentMessageStatusSchema = z.enum(agentMessageStatuses);
 export const agentMessageReceiptTypeSchema = z.enum(agentMessageReceiptTypes);
+export const agentLocalIdentityRoleSchema = z.enum(agentLocalIdentityRoles);
+export const agentLocalIdentityModeSchema = z.enum(agentLocalIdentityModes);
+export const agentSignedArtifactTypeSchema = z.enum(agentSignedArtifactTypes);
+export const agentSignedArtifactVerificationStatusSchema = z.enum(
+  agentSignedArtifactVerificationStatuses,
+);
 export const commListenerModeSchema = z.enum(commListenerModes);
 export const x402ModeSchema = z.enum(x402Modes);
 export const agentPeerCapabilitySchema = agentCommandTypeSchema;
@@ -262,6 +274,42 @@ export const listenerCursorSchema = z
   })
   .strict();
 
+export const agentLocalIdentitySchema = z
+  .object({
+    role: agentLocalIdentityRoleSchema,
+    walletAlias: z.string().min(1),
+    walletAddress: evmAddressSchema,
+    identityWallet: evmAddressSchema,
+    chainId: z.number().int().positive(),
+    mode: agentLocalIdentityModeSchema,
+    activeBindingDigest: bytes32HexSchema.optional(),
+    transportKeyId: z.string().min(1).optional(),
+    metadata: jsonObjectSchema.optional(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+
+export const agentSignedArtifactSchema = z
+  .object({
+    id: z.string().min(1),
+    artifactType: agentSignedArtifactTypeSchema,
+    digest: bytes32HexSchema,
+    signer: evmAddressSchema,
+    identityWallet: evmAddressSchema,
+    chainId: z.number().int().positive(),
+    issuedAt: z.number().int().nonnegative(),
+    expiresAt: z.number().int().nonnegative(),
+    payload: jsonObjectSchema,
+    proof: jsonObjectSchema,
+    verificationStatus: agentSignedArtifactVerificationStatusSchema,
+    verificationError: z.string().optional(),
+    source: z.string().min(1),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+
 export const x402ReceiptSchema = z
   .object({
     id: z.string().min(1),
@@ -294,6 +342,12 @@ export type AgentPeerStatus = z.infer<typeof agentPeerStatusSchema>;
 export type AgentMessageDirection = z.infer<typeof agentMessageDirectionSchema>;
 export type AgentMessageStatus = z.infer<typeof agentMessageStatusSchema>;
 export type AgentMessageReceiptType = z.infer<typeof agentMessageReceiptTypeSchema>;
+export type AgentLocalIdentityRole = z.infer<typeof agentLocalIdentityRoleSchema>;
+export type AgentLocalIdentityMode = z.infer<typeof agentLocalIdentityModeSchema>;
+export type AgentSignedArtifactType = z.infer<typeof agentSignedArtifactTypeSchema>;
+export type AgentSignedArtifactVerificationStatus = z.infer<
+  typeof agentSignedArtifactVerificationStatusSchema
+>;
 export type CommListenerMode = z.infer<typeof commListenerModeSchema>;
 export type X402Mode = z.infer<typeof x402ModeSchema>;
 
@@ -318,5 +372,7 @@ export type AgentMessage = z.infer<typeof agentMessageSchema>;
 export type AgentMessageReceipt = z.infer<typeof agentMessageReceiptSchema>;
 export type AgentSession = z.infer<typeof agentSessionSchema>;
 export type ListenerCursor = z.infer<typeof listenerCursorSchema>;
+export type AgentLocalIdentity = z.infer<typeof agentLocalIdentitySchema>;
+export type AgentSignedArtifact = z.infer<typeof agentSignedArtifactSchema>;
 export type X402Receipt = z.infer<typeof x402ReceiptSchema>;
 export type AgentCommStatus = z.infer<typeof agentCommStatusSchema>;

@@ -7,8 +7,12 @@ import { loadConfig } from "../src/skills/alphaos/runtime/config";
 import { decodeEnvelope } from "../src/skills/alphaos/runtime/agent-comm/calldata-codec";
 import { decrypt, deriveSharedKey } from "../src/skills/alphaos/runtime/agent-comm/ecdh-crypto";
 import {
+  exportIdentityArtifactBundle,
   getCommIdentity,
+  importIdentityArtifactBundle,
   initCommWallet,
+  initTemporaryDemoWallet,
+  listLocalIdentityProfiles,
   registerTrustedPeerEntry,
   sendCommPing,
   sendCommStartDiscovery,
@@ -90,6 +94,67 @@ describe("agent-comm entrypoints", () => {
     expect(identity.chainId).toBe(196);
     expect(identity.walletAlias).toBe("agent-comm");
     expect(identity.defaultSenderPeerId).toBe("agent-comm");
+  });
+
+  it("exports and imports local identity artifacts with verification metadata", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    });
+
+    const exported = await exportIdentityArtifactBundle(deps, {
+      masterPassword: "pass123",
+      displayName: "Local Operator",
+      keyId: "rk_test_01",
+      nowUnixSeconds: 1741348800,
+      expiresInDays: 30,
+    });
+
+    expect(exported.contactCardDigest).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(exported.transportBindingDigest).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(exported.profiles.map((profile) => profile.role)).toEqual(expect.arrayContaining(["liw", "acw"]));
+    expect(exported.bundle.contactCard.displayName).toBe("Local Operator");
+
+    const imported = await importIdentityArtifactBundle(
+      {
+        config: deps.config,
+        store: deps.store,
+      },
+      {
+        bundle: exported.bundle,
+        source: "entrypoint-test-import",
+        nowUnixSeconds: 1741348800,
+      },
+    );
+    expect(imported.ok).toBe(true);
+
+    const profiles = listLocalIdentityProfiles(deps, {
+      masterPassword: "pass123",
+    });
+    expect(profiles.find((profile) => profile.role === "acw")?.activeBindingDigest).toBe(
+      exported.transportBindingDigest,
+    );
+    expect(deps.store.listAgentSignedArtifacts(10)).toHaveLength(2);
+  });
+
+  it("initializes a temporary demo wallet profile without mutating LIW/ACW aliasing", () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    });
+
+    const demo = initTemporaryDemoWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: "0x4444444444444444444444444444444444444444444444444444444444444444",
+    });
+
+    expect(demo.role).toBe("temporary_demo");
+    expect(demo.walletAlias).toBe("agent-comm-demo");
+    expect(deps.store.getAgentLocalIdentity("temporary_demo")?.walletAlias).toBe("agent-comm-demo");
+    expect(deps.store.getAgentLocalIdentity("liw")?.walletAlias).toBe("agent-comm");
+    expect(deps.store.getAgentLocalIdentity("acw")?.walletAlias).toBe("agent-comm");
   });
 
   it("registers trusted peers with minimal defaults", () => {

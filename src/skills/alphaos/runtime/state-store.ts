@@ -25,6 +25,8 @@ import type {
   TradeResult,
 } from "../types";
 import {
+  agentLocalIdentitySchema,
+  agentSignedArtifactSchema,
   agentMessageSchema,
   agentPeerCapabilitySchema,
   agentPeerSchema,
@@ -32,12 +34,18 @@ import {
 } from "./agent-comm/types";
 import type {
   AgentCommandType,
+  AgentLocalIdentity,
+  AgentLocalIdentityMode,
+  AgentLocalIdentityRole,
   AgentMessage,
   AgentMessageDirection,
   AgentMessageStatus,
   AgentPeer,
   AgentPeerCapability,
   AgentPeerStatus,
+  AgentSignedArtifact,
+  AgentSignedArtifactType,
+  AgentSignedArtifactVerificationStatus,
   ListenerCursor,
 } from "./agent-comm/types";
 import { utcDay } from "./time";
@@ -92,6 +100,38 @@ interface ListenerCursorRow {
   address: string;
   chainId: string;
   cursor: string;
+  updatedAt: string;
+}
+
+interface AgentLocalIdentityRow {
+  role: AgentLocalIdentityRole;
+  walletAlias: string;
+  walletAddress: string;
+  identityWallet: string;
+  chainId: number;
+  mode: AgentLocalIdentityMode;
+  activeBindingDigest: string | null;
+  transportKeyId: string | null;
+  metadataJson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AgentSignedArtifactRow {
+  id: string;
+  artifactType: AgentSignedArtifactType;
+  digest: string;
+  signer: string;
+  identityWallet: string;
+  chainId: number;
+  issuedAt: number;
+  expiresAt: number;
+  payloadJson: string;
+  proofJson: string;
+  verificationStatus: AgentSignedArtifactVerificationStatus;
+  verificationError: string | null;
+  source: string;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -156,6 +196,36 @@ const listenerCursorSelectSql = `SELECT address,
                                         cursor,
                                         updated_at AS updatedAt
                                  FROM listener_cursors`;
+
+const agentLocalIdentitySelectSql = `SELECT role,
+                                            wallet_alias AS walletAlias,
+                                            wallet_address AS walletAddress,
+                                            identity_wallet AS identityWallet,
+                                            chain_id AS chainId,
+                                            mode,
+                                            active_binding_digest AS activeBindingDigest,
+                                            transport_key_id AS transportKeyId,
+                                            metadata_json AS metadataJson,
+                                            created_at AS createdAt,
+                                            updated_at AS updatedAt
+                                     FROM agent_local_identities`;
+
+const agentSignedArtifactSelectSql = `SELECT id,
+                                             artifact_type AS artifactType,
+                                             digest,
+                                             signer,
+                                             identity_wallet AS identityWallet,
+                                             chain_id AS chainId,
+                                             issued_at AS issuedAt,
+                                             expires_at AS expiresAt,
+                                             payload_json AS payloadJson,
+                                             proof_json AS proofJson,
+                                             verification_status AS verificationStatus,
+                                             verification_error AS verificationError,
+                                             source,
+                                             created_at AS createdAt,
+                                             updated_at AS updatedAt
+                                      FROM agent_signed_artifacts`;
 
 function normalizeAgentCommLimit(limit: number): number {
   return Math.max(1, Math.min(1000, Math.floor(limit)));
@@ -387,6 +457,38 @@ export class StateStore {
         PRIMARY KEY(address, chain_id)
       );
 
+      CREATE TABLE IF NOT EXISTS agent_local_identities (
+        role TEXT PRIMARY KEY,
+        wallet_alias TEXT NOT NULL,
+        wallet_address TEXT NOT NULL,
+        identity_wallet TEXT NOT NULL,
+        chain_id INTEGER NOT NULL,
+        mode TEXT NOT NULL,
+        active_binding_digest TEXT,
+        transport_key_id TEXT,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_signed_artifacts (
+        id TEXT PRIMARY KEY,
+        artifact_type TEXT NOT NULL,
+        digest TEXT NOT NULL UNIQUE,
+        signer TEXT NOT NULL,
+        identity_wallet TEXT NOT NULL,
+        chain_id INTEGER NOT NULL,
+        issued_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        proof_json TEXT NOT NULL,
+        verification_status TEXT NOT NULL,
+        verification_error TEXT,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_opportunities_status_detected_at
       ON opportunities(status, detected_at DESC);
 
@@ -422,6 +524,21 @@ export class StateStore {
 
       CREATE INDEX IF NOT EXISTS idx_agent_messages_tx_hash
       ON agent_messages(tx_hash);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_local_identities_wallet_address
+      ON agent_local_identities(wallet_address);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_local_identities_identity_wallet
+      ON agent_local_identities(identity_wallet);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_signed_artifacts_type_updated_at
+      ON agent_signed_artifacts(artifact_type, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_signed_artifacts_identity_wallet
+      ON agent_signed_artifacts(identity_wallet, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_agent_signed_artifacts_signer
+      ON agent_signed_artifacts(signer, updated_at DESC);
     `);
 
     this.dropObsoletePhase2AgentCommTables(this.alphaDb);
@@ -611,6 +728,64 @@ export class StateStore {
       cursor: row.cursor,
       updatedAt: row.updatedAt,
     };
+  }
+
+  private toAgentLocalIdentity(row: AgentLocalIdentityRow): AgentLocalIdentity {
+    const primaryKey = `role=${row.role}`;
+    return this.parseAgentCommEntity(agentLocalIdentitySchema, "agent local identity", primaryKey, {
+      role: row.role,
+      walletAlias: row.walletAlias,
+      walletAddress: row.walletAddress,
+      identityWallet: row.identityWallet,
+      chainId: row.chainId,
+      mode: row.mode,
+      activeBindingDigest: row.activeBindingDigest ?? undefined,
+      transportKeyId: row.transportKeyId ?? undefined,
+      metadata: row.metadataJson
+        ? this.parseAgentCommJsonField(
+            jsonObjectSchema,
+            "agent local identity",
+            "metadataJson",
+            primaryKey,
+            row.metadataJson,
+          )
+        : undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
+  }
+
+  private toAgentSignedArtifact(row: AgentSignedArtifactRow): AgentSignedArtifact {
+    const primaryKey = `digest=${row.digest}`;
+    return this.parseAgentCommEntity(agentSignedArtifactSchema, "agent signed artifact", primaryKey, {
+      id: row.id,
+      artifactType: row.artifactType,
+      digest: row.digest,
+      signer: row.signer,
+      identityWallet: row.identityWallet,
+      chainId: row.chainId,
+      issuedAt: row.issuedAt,
+      expiresAt: row.expiresAt,
+      payload: this.parseAgentCommJsonField(
+        jsonObjectSchema,
+        "agent signed artifact",
+        "payloadJson",
+        primaryKey,
+        row.payloadJson,
+      ),
+      proof: this.parseAgentCommJsonField(
+        jsonObjectSchema,
+        "agent signed artifact",
+        "proofJson",
+        primaryKey,
+        row.proofJson,
+      ),
+      verificationStatus: row.verificationStatus,
+      verificationError: row.verificationError ?? undefined,
+      source: row.source,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
   }
 
   private parseAgentCommEntity<T>(
@@ -1115,6 +1290,189 @@ export class StateStore {
       throw new Error(errorMessage);
     }
     return cursor;
+  }
+
+  upsertAgentLocalIdentity(input: {
+    role: AgentLocalIdentityRole;
+    walletAlias: string;
+    walletAddress: string;
+    identityWallet: string;
+    chainId: number;
+    mode: AgentLocalIdentityMode;
+    activeBindingDigest?: string;
+    transportKeyId?: string;
+    metadata?: Record<string, unknown>;
+  }): AgentLocalIdentity {
+    const now = new Date().toISOString();
+    this.runPreparedStatement(
+      this.alphaDb,
+      `INSERT INTO agent_local_identities (
+        role, wallet_alias, wallet_address, identity_wallet, chain_id, mode,
+        active_binding_digest, transport_key_id, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(role) DO UPDATE SET
+        wallet_alias = excluded.wallet_alias,
+        wallet_address = excluded.wallet_address,
+        identity_wallet = excluded.identity_wallet,
+        chain_id = excluded.chain_id,
+        mode = excluded.mode,
+        active_binding_digest = excluded.active_binding_digest,
+        transport_key_id = excluded.transport_key_id,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at`,
+      input.role,
+      input.walletAlias,
+      input.walletAddress,
+      input.identityWallet,
+      input.chainId,
+      input.mode,
+      input.activeBindingDigest ?? null,
+      input.transportKeyId ?? null,
+      input.metadata ? JSON.stringify(input.metadata) : null,
+      now,
+      now,
+    );
+
+    return this.getRequiredAgentLocalIdentity(
+      input.role,
+      `agent local identity not found after upsert: ${input.role}`,
+    );
+  }
+
+  getAgentLocalIdentity(role: AgentLocalIdentityRole): AgentLocalIdentity | null {
+    const row = this.alphaDb
+      .prepare(`${agentLocalIdentitySelectSql} WHERE role = ? LIMIT 1`)
+      .get(role) as AgentLocalIdentityRow | undefined;
+    return row ? this.toAgentLocalIdentity(row) : null;
+  }
+
+  private getRequiredAgentLocalIdentity(
+    role: AgentLocalIdentityRole,
+    errorMessage: string,
+  ): AgentLocalIdentity {
+    const identity = this.getAgentLocalIdentity(role);
+    if (!identity) {
+      throw new Error(errorMessage);
+    }
+    return identity;
+  }
+
+  listAgentLocalIdentities(limit = 10): AgentLocalIdentity[] {
+    const safeLimit = normalizeAgentCommLimit(limit);
+    const rows = this.alphaDb
+      .prepare(`${agentLocalIdentitySelectSql} ORDER BY updated_at DESC LIMIT ?`)
+      .all(safeLimit) as AgentLocalIdentityRow[];
+    return rows.map((row) => this.toAgentLocalIdentity(row));
+  }
+
+  upsertAgentSignedArtifact(input: {
+    id?: string;
+    artifactType: AgentSignedArtifactType;
+    digest: string;
+    signer: string;
+    identityWallet: string;
+    chainId: number;
+    issuedAt: number;
+    expiresAt: number;
+    payload: Record<string, unknown>;
+    proof: Record<string, unknown>;
+    verificationStatus: AgentSignedArtifactVerificationStatus;
+    verificationError?: string;
+    source: string;
+  }): AgentSignedArtifact {
+    const now = new Date().toISOString();
+    const existing = this.alphaDb
+      .prepare("SELECT id FROM agent_signed_artifacts WHERE digest = ?")
+      .get(input.digest) as { id: string } | undefined;
+    const id = existing?.id ?? input.id ?? crypto.randomUUID();
+
+    this.runPreparedStatement(
+      this.alphaDb,
+      `INSERT INTO agent_signed_artifacts (
+        id, artifact_type, digest, signer, identity_wallet, chain_id, issued_at, expires_at,
+        payload_json, proof_json, verification_status, verification_error, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(digest) DO UPDATE SET
+        artifact_type = excluded.artifact_type,
+        signer = excluded.signer,
+        identity_wallet = excluded.identity_wallet,
+        chain_id = excluded.chain_id,
+        issued_at = excluded.issued_at,
+        expires_at = excluded.expires_at,
+        payload_json = excluded.payload_json,
+        proof_json = excluded.proof_json,
+        verification_status = excluded.verification_status,
+        verification_error = excluded.verification_error,
+        source = excluded.source,
+        updated_at = excluded.updated_at`,
+      id,
+      input.artifactType,
+      input.digest,
+      input.signer,
+      input.identityWallet,
+      input.chainId,
+      input.issuedAt,
+      input.expiresAt,
+      JSON.stringify(input.payload),
+      JSON.stringify(input.proof),
+      input.verificationStatus,
+      input.verificationError ?? null,
+      input.source,
+      now,
+      now,
+    );
+
+    return this.getRequiredAgentSignedArtifact(
+      input.digest,
+      `agent signed artifact not found after upsert: ${input.digest}`,
+    );
+  }
+
+  getAgentSignedArtifact(digest: string): AgentSignedArtifact | null {
+    const row = this.alphaDb
+      .prepare(`${agentSignedArtifactSelectSql} WHERE digest = ? LIMIT 1`)
+      .get(digest) as AgentSignedArtifactRow | undefined;
+    return row ? this.toAgentSignedArtifact(row) : null;
+  }
+
+  private getRequiredAgentSignedArtifact(digest: string, errorMessage: string): AgentSignedArtifact {
+    const artifact = this.getAgentSignedArtifact(digest);
+    if (!artifact) {
+      throw new Error(errorMessage);
+    }
+    return artifact;
+  }
+
+  listAgentSignedArtifacts(
+    limit = 100,
+    filters?: {
+      artifactType?: AgentSignedArtifactType;
+      identityWallet?: string;
+      signer?: string;
+    },
+  ): AgentSignedArtifact[] {
+    const safeLimit = normalizeAgentCommLimit(limit);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.artifactType) {
+      clauses.push("artifact_type = ?");
+      params.push(filters.artifactType);
+    }
+    if (filters?.identityWallet) {
+      clauses.push("identity_wallet = ?");
+      params.push(filters.identityWallet);
+    }
+    if (filters?.signer) {
+      clauses.push("signer = ?");
+      params.push(filters.signer);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.alphaDb
+      .prepare(`${agentSignedArtifactSelectSql} ${whereClause} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...params, safeLimit) as AgentSignedArtifactRow[];
+    return rows.map((row) => this.toAgentSignedArtifact(row));
   }
 
   insertDiscoverySession(input: {

@@ -331,6 +331,82 @@ describe("StateStore P0 safety", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("persists local identity roles and signed artifact records for v2 groundwork", () => {
+    const { dir, store } = createStore("alphaos-state-");
+
+    const liw = store.upsertAgentLocalIdentity({
+      role: "liw",
+      walletAlias: "agent-comm",
+      walletAddress: "0x1111111111111111111111111111111111111111",
+      identityWallet: "0x1111111111111111111111111111111111111111",
+      chainId: 196,
+      mode: "temporary_dual_use",
+    });
+    const acw = store.upsertAgentLocalIdentity({
+      role: "acw",
+      walletAlias: "agent-comm",
+      walletAddress: "0x1111111111111111111111111111111111111111",
+      identityWallet: "0x1111111111111111111111111111111111111111",
+      chainId: 196,
+      mode: "temporary_dual_use",
+      activeBindingDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      transportKeyId: "rk_2026_01",
+    });
+
+    expect(liw.role).toBe("liw");
+    expect(acw.activeBindingDigest).toBe(
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    expect(store.listAgentLocalIdentities(10).map((profile) => profile.role)).toEqual(
+      expect.arrayContaining(["liw", "acw"]),
+    );
+
+    const digest = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const saved = store.upsertAgentSignedArtifact({
+      artifactType: "ContactCard",
+      digest,
+      signer: "0x1111111111111111111111111111111111111111",
+      identityWallet: "0x1111111111111111111111111111111111111111",
+      chainId: 196,
+      issuedAt: 1741348800,
+      expiresAt: 1757246400,
+      payload: {
+        cardVersion: 1,
+      },
+      proof: {
+        type: "eip712",
+      },
+      verificationStatus: "verified",
+      source: "unit-test",
+    });
+    expect(saved.artifactType).toBe("ContactCard");
+    expect(store.getAgentSignedArtifact(digest)?.verificationStatus).toBe("verified");
+
+    store.upsertAgentSignedArtifact({
+      artifactType: "ContactCard",
+      digest,
+      signer: "0x1111111111111111111111111111111111111111",
+      identityWallet: "0x1111111111111111111111111111111111111111",
+      chainId: 196,
+      issuedAt: 1741348800,
+      expiresAt: 1757246400,
+      payload: {
+        cardVersion: 1,
+      },
+      proof: {
+        type: "eip712",
+      },
+      verificationStatus: "invalid",
+      verificationError: "bad signature",
+      source: "unit-test-import",
+    });
+    expect(store.getAgentSignedArtifact(digest)?.verificationStatus).toBe("invalid");
+    expect(store.listAgentSignedArtifacts(10, { artifactType: "ContactCard" })).toHaveLength(1);
+
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("drops obsolete agent comm tables and enforces message uniqueness when opening a legacy db", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-state-legacy-"));
     const legacyDb = new Database(path.join(dir, "alpha.db"));

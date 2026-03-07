@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { createLogger } from "./skills/alphaos/runtime/logger";
 import { loadConfig } from "./skills/alphaos/runtime/config";
 import { getNetworkProfileReadinessSnapshot } from "./skills/alphaos/runtime/network-profile-probe";
@@ -6,8 +8,12 @@ import { createServer } from "./skills/alphaos/api/server";
 import { StateStore } from "./skills/alphaos/runtime/state-store";
 import { VaultService } from "./skills/alphaos/runtime/vault";
 import {
+  exportIdentityArtifactBundle,
   getCommIdentity,
+  importIdentityArtifactBundleFromJson,
   initCommWallet,
+  initTemporaryDemoWallet,
+  listLocalIdentityProfiles,
   registerTrustedPeerEntry,
   sendCommPing,
   sendCommStartDiscovery,
@@ -113,8 +119,6 @@ function writeJson(payload: unknown): void {
 }
 
 const plannedAgentCommCommands = new Set([
-  "agent-comm:card:export",
-  "agent-comm:card:import",
   "agent-comm:contacts:list",
   "agent-comm:connect:invite",
   "agent-comm:connect:accept",
@@ -127,13 +131,14 @@ function getAgentCommHelpText(): string {
     "",
     "Available now:",
     "  agent-comm:wallet:init",
+    "  agent-comm:wallet:init-demo",
     "  agent-comm:identity",
+    "  agent-comm:card:export [--display-name <name>] [--output <file>]",
+    "  agent-comm:card:import <file>",
     "  agent-comm:peer:trust    (legacy/manual v1 fallback)",
     "  agent-comm:send <ping|start_discovery> <peerId>",
     "",
-    "Planned v2 identity-artifact commands (reserved, not implemented in this phase):",
-    "  agent-comm:card:export",
-    "  agent-comm:card:import <file|url>",
+    "Planned v2 contact-flow commands (reserved, not implemented in this phase):",
     "  agent-comm:contacts:list",
     "  agent-comm:connect:invite <contactRef>",
     "  agent-comm:connect:accept <contactRef>",
@@ -215,6 +220,33 @@ async function run(): Promise<void> {
     return;
   }
 
+  if (command === "agent-comm:wallet:init-demo") {
+    const parsed = parseCliArgs(argv.slice(1));
+    const store = new StateStore(config.dataDir);
+    const vault = new VaultService(store);
+    try {
+      const result = initTemporaryDemoWallet(
+        {
+          config,
+          store,
+          vault,
+        },
+        {
+          privateKey: readFlag(parsed, "private-key"),
+          senderPeerId: readFlag(parsed, "sender-peer-id"),
+          walletAlias: readFlag(parsed, "wallet-alias"),
+        },
+      );
+      writeJson({
+        action: "agent-comm:wallet:init-demo",
+        ...result,
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
   if (command === "agent-comm:identity") {
     const parsed = parseCliArgs(argv.slice(1));
     const store = new StateStore(config.dataDir);
@@ -230,9 +262,89 @@ async function run(): Promise<void> {
           senderPeerId: readFlag(parsed, "sender-peer-id"),
         },
       );
+      const localProfiles = listLocalIdentityProfiles(
+        {
+          config,
+          store,
+          vault,
+        },
+        {},
+      );
       writeJson({
         action: "agent-comm:identity",
         ...identity,
+        localProfiles,
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
+  if (command === "agent-comm:card:export") {
+    const parsed = parseCliArgs(argv.slice(1));
+    const store = new StateStore(config.dataDir);
+    const vault = new VaultService(store);
+    try {
+      const output = readFlag(parsed, "output");
+      const result = await exportIdentityArtifactBundle(
+        {
+          config,
+          store,
+          vault,
+        },
+        {
+          displayName: readFlag(parsed, "display-name"),
+          handle: readFlag(parsed, "handle"),
+          capabilityProfile: readFlag(parsed, "capability-profile"),
+          capabilities: parseCsv(readFlag(parsed, "capabilities")),
+          expiresInDays: parsePositiveIntegerFlag(readFlag(parsed, "expires-in-days"), "expires-in-days"),
+          keyId: readFlag(parsed, "key-id"),
+          legacyPeerId: readFlag(parsed, "legacy-peer-id"),
+        },
+      );
+
+      const outputPath = output ? path.resolve(output) : undefined;
+      if (outputPath) {
+        fs.writeFileSync(outputPath, `${JSON.stringify(result.bundle, null, 2)}\n`);
+      }
+
+      writeJson({
+        action: "agent-comm:card:export",
+        ...result,
+        outputPath,
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
+  if (command === "agent-comm:card:import") {
+    const parsed = parseCliArgs(argv.slice(1));
+    const [inputPath] = parsed.positionals;
+    if (!inputPath) {
+      throw new Error("Usage: tsx src/index.ts agent-comm:card:import <file>");
+    }
+
+    const resolvedPath = path.resolve(inputPath);
+    const raw = fs.readFileSync(resolvedPath, "utf8");
+    const store = new StateStore(config.dataDir);
+    try {
+      const result = await importIdentityArtifactBundleFromJson(
+        {
+          config,
+          store,
+        },
+        raw,
+        {
+          source: `file:${resolvedPath}`,
+        },
+      );
+      writeJson({
+        action: "agent-comm:card:import",
+        inputPath: resolvedPath,
+        ...result,
       });
     } finally {
       store.close();
