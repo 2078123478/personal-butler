@@ -120,6 +120,10 @@ VAULT_MASTER_PASSWORD=pass123 npm run dev -- vault:get trader-key
 ```
 
 ## Agent-Comm v0.1
+- 最小复用入口：`docs/AGENT_COMM_MIN_REUSE.md`
+- 用户说明书：`docs/AGENT_COMM_EXPLAINED.md`
+- 隐私与建联分析：`docs/AGENT_COMM_PRIVACY_AND_TRUST_ANALYSIS.md`
+
 最小复用入口文档见 `docs/AGENT_COMM_MIN_REUSE.md`。
 
 1. Configure `.env`:
