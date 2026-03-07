@@ -12,13 +12,23 @@ type IsEqual<A, B> =
 export const AGENT_COMM_ENVELOPE_VERSION = 1;
 export const AGENT_COMM_DEFAULT_MAX_MESSAGE_BYTES = 4096;
 
-export const agentCommandTypes = [
+export const agentBusinessCommandTypes = [
   "ping",
   "probe_onchainos",
   "start_discovery",
   "get_discovery_report",
   "approve_candidate",
   "request_mode_change",
+] as const;
+export const agentConnectionCommandTypes = [
+  "connection_invite",
+  "connection_accept",
+  "connection_reject",
+  "connection_confirm",
+] as const;
+export const agentCommandTypes = [
+  ...agentBusinessCommandTypes,
+  ...agentConnectionCommandTypes,
 ] as const;
 
 export const agentPeerStatuses = ["pending", "trusted", "blocked", "revoked"] as const;
@@ -47,12 +57,7 @@ export const agentContactStatuses = [
   "revoked",
 ] as const;
 export const agentTransportEndpointStatuses = ["active", "inactive", "revoked"] as const;
-export const agentConnectionEventTypes = [
-  "connection_invite",
-  "connection_accept",
-  "connection_reject",
-  "connection_confirm",
-] as const;
+export const agentConnectionEventTypes = agentConnectionCommandTypes;
 export const agentConnectionEventStatuses = ["pending", "applied", "rejected", "ignored"] as const;
 export const agentArtifactRevocationStatuses = ["active", "revoked", "superseded"] as const;
 export const commListenerModes = ["disabled", "poll", "ws"] as const;
@@ -98,6 +103,21 @@ export const commListenerModeSchema = z.enum(commListenerModes);
 export const x402ModeSchema = z.enum(x402Modes);
 export const agentPeerCapabilitySchema = agentCommandTypeSchema;
 
+const agentBusinessCommandTypeSet = new Set<string>(agentBusinessCommandTypes);
+const agentConnectionCommandTypeSet = new Set<string>(agentConnectionCommandTypes);
+
+export function isBusinessCommandType(
+  type: string,
+): type is (typeof agentBusinessCommandTypes)[number] {
+  return agentBusinessCommandTypeSet.has(type);
+}
+
+export function isConnectionCommandType(
+  type: string,
+): type is (typeof agentConnectionCommandTypes)[number] {
+  return agentConnectionCommandTypeSet.has(type);
+}
+
 export const pingCommandPayloadSchema = z
   .object({
     echo: z.string().optional(),
@@ -141,6 +161,35 @@ export const requestModeChangeCommandPayloadSchema = z
   .object({
     requestedMode: executionModeSchema,
     reason: z.string().optional(),
+  })
+  .strict();
+
+export const connectionInviteCommandPayloadSchema = z
+  .object({
+    requestedProfile: z.string().min(1).optional(),
+    requestedCapabilities: z.array(z.string().min(1)).optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+export const connectionAcceptCommandPayloadSchema = z
+  .object({
+    capabilityProfile: z.string().min(1).optional(),
+    capabilities: z.array(z.string().min(1)).optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+export const connectionRejectCommandPayloadSchema = z
+  .object({
+    reason: z.string().min(1).optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+export const connectionConfirmCommandPayloadSchema = z
+  .object({
+    note: z.string().optional(),
   })
   .strict();
 
@@ -193,6 +242,34 @@ export const requestModeChangeCommandSchema = z
   })
   .strict();
 
+export const connectionInviteCommandSchema = z
+  .object({
+    type: z.literal("connection_invite"),
+    payload: connectionInviteCommandPayloadSchema,
+  })
+  .strict();
+
+export const connectionAcceptCommandSchema = z
+  .object({
+    type: z.literal("connection_accept"),
+    payload: connectionAcceptCommandPayloadSchema,
+  })
+  .strict();
+
+export const connectionRejectCommandSchema = z
+  .object({
+    type: z.literal("connection_reject"),
+    payload: connectionRejectCommandPayloadSchema,
+  })
+  .strict();
+
+export const connectionConfirmCommandSchema = z
+  .object({
+    type: z.literal("connection_confirm"),
+    payload: connectionConfirmCommandPayloadSchema,
+  })
+  .strict();
+
 export const agentCommandSchema = z.discriminatedUnion("type", [
   pingCommandSchema,
   probeOnchainOsCommandSchema,
@@ -200,6 +277,10 @@ export const agentCommandSchema = z.discriminatedUnion("type", [
   getDiscoveryReportCommandSchema,
   approveCandidateCommandSchema,
   requestModeChangeCommandSchema,
+  connectionInviteCommandSchema,
+  connectionAcceptCommandSchema,
+  connectionRejectCommandSchema,
+  connectionConfirmCommandSchema,
 ]);
 
 export const x402ProofSchema = z
@@ -427,6 +508,8 @@ export const agentCommStatusSchema = z
   .strict();
 
 export type AgentCommandType = z.infer<typeof agentCommandTypeSchema>;
+export type AgentBusinessCommandType = (typeof agentBusinessCommandTypes)[number];
+export type AgentConnectionCommandType = (typeof agentConnectionCommandTypes)[number];
 export type AgentPeerCapability = z.infer<typeof agentPeerCapabilitySchema>;
 export type AgentPeerStatus = z.infer<typeof agentPeerStatusSchema>;
 export type AgentMessageDirection = z.infer<typeof agentMessageDirectionSchema>;
@@ -452,6 +535,10 @@ export type StartDiscoveryCommandPayload = z.infer<typeof startDiscoveryCommandP
 export type GetDiscoveryReportCommandPayload = z.infer<typeof getDiscoveryReportCommandPayloadSchema>;
 export type ApproveCandidateCommandPayload = z.infer<typeof approveCandidateCommandPayloadSchema>;
 export type RequestModeChangeCommandPayload = z.infer<typeof requestModeChangeCommandPayloadSchema>;
+export type ConnectionInviteCommandPayload = z.infer<typeof connectionInviteCommandPayloadSchema>;
+export type ConnectionAcceptCommandPayload = z.infer<typeof connectionAcceptCommandPayloadSchema>;
+export type ConnectionRejectCommandPayload = z.infer<typeof connectionRejectCommandPayloadSchema>;
+export type ConnectionConfirmCommandPayload = z.infer<typeof connectionConfirmCommandPayloadSchema>;
 export type AgentCommandDescriptor = z.infer<typeof agentCommandDescriptorSchema>;
 export type PingCommand = z.infer<typeof pingCommandSchema>;
 export type ProbeOnchainOsCommand = z.infer<typeof probeOnchainOsCommandSchema>;
@@ -459,6 +546,10 @@ export type StartDiscoveryCommand = z.infer<typeof startDiscoveryCommandSchema>;
 export type GetDiscoveryReportCommand = z.infer<typeof getDiscoveryReportCommandSchema>;
 export type ApproveCandidateCommand = z.infer<typeof approveCandidateCommandSchema>;
 export type RequestModeChangeCommand = z.infer<typeof requestModeChangeCommandSchema>;
+export type ConnectionInviteCommand = z.infer<typeof connectionInviteCommandSchema>;
+export type ConnectionAcceptCommand = z.infer<typeof connectionAcceptCommandSchema>;
+export type ConnectionRejectCommand = z.infer<typeof connectionRejectCommandSchema>;
+export type ConnectionConfirmCommand = z.infer<typeof connectionConfirmCommandSchema>;
 export type AgentCommand = z.infer<typeof agentCommandSchema>;
 export type X402Proof = z.infer<typeof x402ProofSchema>;
 export type EncryptedEnvelope = z.infer<typeof encryptedEnvelopeSchema>;
