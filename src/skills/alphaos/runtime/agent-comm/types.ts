@@ -44,6 +44,7 @@ export const agentMessageStatuses = [
   "confirmed",
   "received",
   "decrypted",
+  "paid_pending",
   "executed",
   "rejected",
   "failed",
@@ -81,6 +82,23 @@ type _ExecutionModeMatches = Assert<
 type _DiscoveryStrategyMatches = Assert<
   IsEqual<(typeof discoveryStrategyIds)[number], DiscoveryStrategyId>
 >;
+
+const strictObject = <Shape extends z.ZodRawShape>(shape: Shape) => z.object(shape).strict();
+const createCommandSchema = <
+  Type extends (typeof agentCommandTypes)[number],
+  Payload extends z.ZodTypeAny,
+>(
+  type: Type,
+  payload: Payload,
+) =>
+  strictObject({
+    type: z.literal(type),
+    payload,
+  });
+const nonEmptyStringSchema = z.string().min(1);
+const positiveIntSchema = z.number().int().positive();
+const nonNegativeIntSchema = z.number().int().nonnegative();
+const nonEmptyStringArraySchema = z.array(nonEmptyStringSchema);
 
 export const jsonObjectSchema = z.record(z.string(), z.unknown());
 export const executionModeSchema = z.enum(executionModes);
@@ -123,169 +141,113 @@ export function isConnectionCommandType(
   return agentConnectionCommandTypeSet.has(type);
 }
 
-export const pingCommandPayloadSchema = z
-  .object({
-    echo: z.string().optional(),
-    note: z.string().optional(),
-  })
-  .strict();
+export const pingCommandPayloadSchema = strictObject({
+  echo: z.string().optional(),
+  note: z.string().optional(),
+});
 
-export const probeOnchainOsCommandPayloadSchema = z
-  .object({
-    pair: z.string().optional(),
-    chainIndex: z.string().optional(),
-    notionalUsd: z.number().finite().optional(),
-  })
-  .strict();
+export const probeOnchainOsCommandPayloadSchema = strictObject({
+  pair: z.string().optional(),
+  chainIndex: z.string().optional(),
+  notionalUsd: z.number().finite().optional(),
+});
 
-export const startDiscoveryCommandPayloadSchema = z
-  .object({
-    strategyId: discoveryStrategyIdSchema.optional(),
-    pairs: z.array(z.string().min(1)).optional(),
-    durationMinutes: z.number().int().positive().optional(),
-    sampleIntervalSec: z.number().int().positive().optional(),
-    topN: z.number().int().positive().optional(),
-  })
-  .strict();
+export const startDiscoveryCommandPayloadSchema = strictObject({
+  strategyId: discoveryStrategyIdSchema.optional(),
+  pairs: nonEmptyStringArraySchema.optional(),
+  durationMinutes: positiveIntSchema.optional(),
+  sampleIntervalSec: positiveIntSchema.optional(),
+  topN: positiveIntSchema.optional(),
+});
 
-export const getDiscoveryReportCommandPayloadSchema = z
-  .object({
-    sessionId: z.string().min(1),
-  })
-  .strict();
+export const getDiscoveryReportCommandPayloadSchema = strictObject({
+  sessionId: nonEmptyStringSchema,
+});
 
-export const approveCandidateCommandPayloadSchema = z
-  .object({
-    sessionId: z.string().min(1),
-    candidateId: z.string().min(1),
-    mode: executionModeSchema.optional(),
-  })
-  .strict();
+export const approveCandidateCommandPayloadSchema = strictObject({
+  sessionId: nonEmptyStringSchema,
+  candidateId: nonEmptyStringSchema,
+  mode: executionModeSchema.optional(),
+});
 
-export const requestModeChangeCommandPayloadSchema = z
-  .object({
-    requestedMode: executionModeSchema,
-    reason: z.string().optional(),
-  })
-  .strict();
+export const requestModeChangeCommandPayloadSchema = strictObject({
+  requestedMode: executionModeSchema,
+  reason: z.string().optional(),
+});
 
-export const connectionInviteCommandPayloadSchema = z
-  .object({
-    requestedProfile: z.string().min(1).optional(),
-    requestedCapabilities: z.array(z.string().min(1)).optional(),
-    note: z.string().optional(),
-    inlineCard: signedIdentityArtifactBundleSchema.optional(),
-  })
-  .strict();
+export const connectionInviteCommandPayloadSchema = strictObject({
+  requestedProfile: nonEmptyStringSchema.optional(),
+  requestedCapabilities: nonEmptyStringArraySchema.optional(),
+  note: z.string().optional(),
+  inlineCard: signedIdentityArtifactBundleSchema.optional(),
+});
 
-export const connectionAcceptCommandPayloadSchema = z
-  .object({
-    capabilityProfile: z.string().min(1).optional(),
-    capabilities: z.array(z.string().min(1)).optional(),
-    note: z.string().optional(),
-    inlineCard: signedIdentityArtifactBundleSchema.optional(),
-  })
-  .strict();
+export const connectionAcceptCommandPayloadSchema = strictObject({
+  capabilityProfile: nonEmptyStringSchema.optional(),
+  capabilities: nonEmptyStringArraySchema.optional(),
+  note: z.string().optional(),
+  inlineCard: signedIdentityArtifactBundleSchema.optional(),
+});
 
-export const connectionRejectCommandPayloadSchema = z
-  .object({
-    reason: z.string().min(1).optional(),
-    note: z.string().optional(),
-    inlineCard: signedIdentityArtifactBundleSchema.optional(),
-  })
-  .strict();
+export const connectionRejectCommandPayloadSchema = strictObject({
+  reason: nonEmptyStringSchema.optional(),
+  note: z.string().optional(),
+  inlineCard: signedIdentityArtifactBundleSchema.optional(),
+});
 
-export const connectionConfirmCommandPayloadSchema = z
-  .object({
-    note: z.string().optional(),
-    inlineCard: signedIdentityArtifactBundleSchema.optional(),
-  })
-  .strict();
+export const connectionConfirmCommandPayloadSchema = strictObject({
+  note: z.string().optional(),
+  inlineCard: signedIdentityArtifactBundleSchema.optional(),
+});
 
-export const agentCommandDescriptorSchema = z
-  .object({
-    type: agentCommandTypeSchema,
-    schemaVersion: z.number().int().positive(),
-  })
-  .strict();
+export const agentCommandDescriptorSchema = strictObject({
+  type: agentCommandTypeSchema,
+  schemaVersion: positiveIntSchema,
+});
 
-export const versionedAgentCommandSchema = z
-  .object({
-    type: agentCommandTypeSchema,
-    schemaVersion: z.number().int().positive(),
-    payload: z.unknown(),
-  })
-  .strict();
+export const versionedAgentCommandSchema = strictObject({
+  type: agentCommandTypeSchema,
+  schemaVersion: positiveIntSchema,
+  payload: z.unknown(),
+});
 
-export const pingCommandSchema = z
-  .object({
-    type: z.literal("ping"),
-    payload: pingCommandPayloadSchema,
-  })
-  .strict();
-
-export const probeOnchainOsCommandSchema = z
-  .object({
-    type: z.literal("probe_onchainos"),
-    payload: probeOnchainOsCommandPayloadSchema,
-  })
-  .strict();
-
-export const startDiscoveryCommandSchema = z
-  .object({
-    type: z.literal("start_discovery"),
-    payload: startDiscoveryCommandPayloadSchema,
-  })
-  .strict();
-
-export const getDiscoveryReportCommandSchema = z
-  .object({
-    type: z.literal("get_discovery_report"),
-    payload: getDiscoveryReportCommandPayloadSchema,
-  })
-  .strict();
-
-export const approveCandidateCommandSchema = z
-  .object({
-    type: z.literal("approve_candidate"),
-    payload: approveCandidateCommandPayloadSchema,
-  })
-  .strict();
-
-export const requestModeChangeCommandSchema = z
-  .object({
-    type: z.literal("request_mode_change"),
-    payload: requestModeChangeCommandPayloadSchema,
-  })
-  .strict();
-
-export const connectionInviteCommandSchema = z
-  .object({
-    type: z.literal("connection_invite"),
-    payload: connectionInviteCommandPayloadSchema,
-  })
-  .strict();
-
-export const connectionAcceptCommandSchema = z
-  .object({
-    type: z.literal("connection_accept"),
-    payload: connectionAcceptCommandPayloadSchema,
-  })
-  .strict();
-
-export const connectionRejectCommandSchema = z
-  .object({
-    type: z.literal("connection_reject"),
-    payload: connectionRejectCommandPayloadSchema,
-  })
-  .strict();
-
-export const connectionConfirmCommandSchema = z
-  .object({
-    type: z.literal("connection_confirm"),
-    payload: connectionConfirmCommandPayloadSchema,
-  })
-  .strict();
+export const pingCommandSchema = createCommandSchema("ping", pingCommandPayloadSchema);
+export const probeOnchainOsCommandSchema = createCommandSchema(
+  "probe_onchainos",
+  probeOnchainOsCommandPayloadSchema,
+);
+export const startDiscoveryCommandSchema = createCommandSchema(
+  "start_discovery",
+  startDiscoveryCommandPayloadSchema,
+);
+export const getDiscoveryReportCommandSchema = createCommandSchema(
+  "get_discovery_report",
+  getDiscoveryReportCommandPayloadSchema,
+);
+export const approveCandidateCommandSchema = createCommandSchema(
+  "approve_candidate",
+  approveCandidateCommandPayloadSchema,
+);
+export const requestModeChangeCommandSchema = createCommandSchema(
+  "request_mode_change",
+  requestModeChangeCommandPayloadSchema,
+);
+export const connectionInviteCommandSchema = createCommandSchema(
+  "connection_invite",
+  connectionInviteCommandPayloadSchema,
+);
+export const connectionAcceptCommandSchema = createCommandSchema(
+  "connection_accept",
+  connectionAcceptCommandPayloadSchema,
+);
+export const connectionRejectCommandSchema = createCommandSchema(
+  "connection_reject",
+  connectionRejectCommandPayloadSchema,
+);
+export const connectionConfirmCommandSchema = createCommandSchema(
+  "connection_confirm",
+  connectionConfirmCommandPayloadSchema,
+);
 
 export const agentCommandSchema = z.discriminatedUnion("type", [
   pingCommandSchema,
@@ -300,288 +262,247 @@ export const agentCommandSchema = z.discriminatedUnion("type", [
   connectionConfirmCommandSchema,
 ]);
 
-export const x402ProofSchema = z
-  .object({
-    scheme: z.literal("x402"),
-    version: z.string().optional(),
-    network: z.string().optional(),
-    payer: z.string().optional(),
-    payee: z.string().optional(),
-    asset: z.string().optional(),
-    amount: z.string().optional(),
-    nonce: z.string().optional(),
-    expiresAt: z.string().optional(),
-    signature: z.string().optional(),
-    metadata: jsonObjectSchema.optional(),
-  })
-  .strict();
+export const x402ProofSchema = strictObject({
+  scheme: z.literal("x402"),
+  version: z.string().optional(),
+  network: z.string().optional(),
+  payer: z.string().optional(),
+  payee: z.string().optional(),
+  asset: z.string().optional(),
+  amount: z.string().optional(),
+  nonce: z.string().optional(),
+  expiresAt: z.string().optional(),
+  signature: z.string().optional(),
+  metadata: jsonObjectSchema.optional(),
+});
 
-export const encryptedEnvelopeV1Schema = z
-  .object({
-    version: z.literal(AGENT_COMM_LEGACY_ENVELOPE_VERSION),
-    senderPeerId: z.string().min(1),
-    senderPubkey: z.string().min(1),
-    recipient: z.string().min(1),
-    nonce: z.string().min(1),
-    timestamp: z.string().min(1),
-    command: agentCommandDescriptorSchema,
-    x402: x402ProofSchema.optional(),
-    ciphertext: z.string().min(1),
-    signature: z.string().min(1),
-  })
-  .strict();
+export const encryptedEnvelopeV1Schema = strictObject({
+  version: z.literal(AGENT_COMM_LEGACY_ENVELOPE_VERSION),
+  senderPeerId: nonEmptyStringSchema,
+  senderPubkey: nonEmptyStringSchema,
+  recipient: nonEmptyStringSchema,
+  nonce: nonEmptyStringSchema,
+  timestamp: nonEmptyStringSchema,
+  command: agentCommandDescriptorSchema,
+  x402: x402ProofSchema.optional(),
+  ciphertext: nonEmptyStringSchema,
+  signature: nonEmptyStringSchema,
+});
 
-export const encryptedEnvelopeV2Schema = z
-  .object({
-    version: z.literal(AGENT_COMM_ENVELOPE_VERSION),
-    kex: z
-      .object({
-        suite: z.literal(AGENT_COMM_KEX_SUITE_V2),
-        recipientKeyId: z.string().min(1),
-        ephemeralPubkey: z.string().min(1),
-      })
-      .strict(),
-    ciphertext: z.string().min(1),
-  })
-  .strict();
+export const encryptedEnvelopeV2Schema = strictObject({
+  version: z.literal(AGENT_COMM_ENVELOPE_VERSION),
+  kex: strictObject({
+    suite: z.literal(AGENT_COMM_KEX_SUITE_V2),
+    recipientKeyId: nonEmptyStringSchema,
+    ephemeralPubkey: nonEmptyStringSchema,
+  }),
+  ciphertext: nonEmptyStringSchema,
+});
 
 export const encryptedEnvelopeSchema = z.union([
   encryptedEnvelopeV1Schema,
   encryptedEnvelopeV2Schema,
 ]);
 
-export const encryptedEnvelopeV2PaymentSchema = z
-  .object({
-    asset: z.string().min(1).optional(),
-    amount: z.string().min(1).optional(),
-    metadata: jsonObjectSchema.optional(),
-  })
-  .strict();
+export const encryptedEnvelopeV2PaymentSchema = strictObject({
+  asset: nonEmptyStringSchema.optional(),
+  amount: nonEmptyStringSchema.optional(),
+  metadata: jsonObjectSchema.optional(),
+});
 
-export const encryptedEnvelopeV2AttachmentsSchema = z
-  .object({
-    inlineCard: signedIdentityArtifactBundleSchema.optional(),
-  })
-  .strict();
+export const encryptedEnvelopeV2AttachmentsSchema = strictObject({
+  inlineCard: signedIdentityArtifactBundleSchema.optional(),
+});
 
-export const encryptedEnvelopeV2SenderSchema = z
-  .object({
-    identityWallet: evmAddressSchema,
-    transportAddress: evmAddressSchema,
-    cardDigest: bytes32HexSchema.optional(),
-  })
-  .strict();
+export const encryptedEnvelopeV2SenderSchema = strictObject({
+  identityWallet: evmAddressSchema,
+  transportAddress: evmAddressSchema,
+  cardDigest: bytes32HexSchema.optional(),
+});
 
-export const encryptedEnvelopeV2BodySchema = z
-  .object({
-    msgId: z.string().uuid(),
-    sentAt: z.string().min(1),
-    sender: encryptedEnvelopeV2SenderSchema,
-    command: versionedAgentCommandSchema,
-    payment: encryptedEnvelopeV2PaymentSchema.optional(),
-    attachments: encryptedEnvelopeV2AttachmentsSchema.optional(),
-  })
-  .strict();
+export const encryptedEnvelopeV2BodySchema = strictObject({
+  msgId: z.string().uuid(),
+  sentAt: nonEmptyStringSchema,
+  sender: encryptedEnvelopeV2SenderSchema,
+  command: versionedAgentCommandSchema,
+  payment: encryptedEnvelopeV2PaymentSchema.optional(),
+  attachments: encryptedEnvelopeV2AttachmentsSchema.optional(),
+});
 
-export const agentPeerSchema = z
-  .object({
-    peerId: z.string().min(1),
-    name: z.string().optional(),
-    walletAddress: z.string().min(1),
-    pubkey: z.string().min(1),
-    status: agentPeerStatusSchema,
-    capabilities: z.array(agentPeerCapabilitySchema),
-    metadata: jsonObjectSchema.optional(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentPeerSchema = strictObject({
+  peerId: nonEmptyStringSchema,
+  name: z.string().optional(),
+  walletAddress: nonEmptyStringSchema,
+  pubkey: nonEmptyStringSchema,
+  status: agentPeerStatusSchema,
+  capabilities: z.array(agentPeerCapabilitySchema),
+  metadata: jsonObjectSchema.optional(),
+  createdAt: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const agentMessageSchema = z
-  .object({
-    id: z.string().min(1),
-    direction: agentMessageDirectionSchema,
-    peerId: z.string().min(1),
-    txHash: z.string().optional(),
-    nonce: z.string().min(1),
-    commandType: agentCommandTypeSchema,
-    envelopeVersion: z.number().int().positive().optional(),
-    msgId: z.string().uuid().optional(),
-    contactId: z.string().min(1).optional(),
-    identityWallet: z.string().min(1).optional(),
-    transportAddress: z.string().min(1).optional(),
-    trustOutcome: z.string().min(1).optional(),
-    decryptedCommandType: agentCommandTypeSchema.optional(),
-    ciphertext: z.string().min(1),
-    status: agentMessageStatusSchema,
-    error: z.string().optional(),
-    sentAt: z.string().optional(),
-    receivedAt: z.string().optional(),
-    executedAt: z.string().optional(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentMessageSchema = strictObject({
+  id: nonEmptyStringSchema,
+  direction: agentMessageDirectionSchema,
+  peerId: nonEmptyStringSchema,
+  txHash: z.string().optional(),
+  nonce: nonEmptyStringSchema,
+  commandType: agentCommandTypeSchema,
+  envelopeVersion: positiveIntSchema.optional(),
+  msgId: z.string().uuid().optional(),
+  contactId: nonEmptyStringSchema.optional(),
+  identityWallet: nonEmptyStringSchema.optional(),
+  transportAddress: nonEmptyStringSchema.optional(),
+  trustOutcome: nonEmptyStringSchema.optional(),
+  payment: encryptedEnvelopeV2PaymentSchema.optional(),
+  decryptedCommandType: agentCommandTypeSchema.optional(),
+  ciphertext: nonEmptyStringSchema,
+  status: agentMessageStatusSchema,
+  error: z.string().optional(),
+  sentAt: z.string().optional(),
+  receivedAt: z.string().optional(),
+  executedAt: z.string().optional(),
+  createdAt: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const agentMessageReceiptSchema = z
-  .object({
-    id: z.string().min(1),
-    messageId: z.string().min(1),
-    receiptType: agentMessageReceiptTypeSchema,
-    payload: jsonObjectSchema,
-    createdAt: z.string().min(1),
-  })
-  .strict();
+export const agentMessageReceiptSchema = strictObject({
+  id: nonEmptyStringSchema,
+  messageId: nonEmptyStringSchema,
+  receiptType: agentMessageReceiptTypeSchema,
+  payload: jsonObjectSchema,
+  createdAt: nonEmptyStringSchema,
+});
 
-export const agentSessionSchema = z
-  .object({
-    id: z.string().min(1),
-    peerId: z.string().min(1),
-    sharedKeyHint: z.string().optional(),
-    lastNonce: z.string().optional(),
-    lastTxHash: z.string().optional(),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentSessionSchema = strictObject({
+  id: nonEmptyStringSchema,
+  peerId: nonEmptyStringSchema,
+  sharedKeyHint: z.string().optional(),
+  lastNonce: z.string().optional(),
+  lastTxHash: z.string().optional(),
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const listenerCursorSchema = z
-  .object({
-    address: z.string().min(1),
-    chainId: z.string().min(1),
-    cursor: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const listenerCursorSchema = strictObject({
+  address: nonEmptyStringSchema,
+  chainId: nonEmptyStringSchema,
+  cursor: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const agentLocalIdentitySchema = z
-  .object({
-    role: agentLocalIdentityRoleSchema,
-    walletAlias: z.string().min(1),
-    walletAddress: evmAddressSchema,
-    identityWallet: evmAddressSchema,
-    chainId: z.number().int().positive(),
-    mode: agentLocalIdentityModeSchema,
-    activeBindingDigest: bytes32HexSchema.optional(),
-    transportKeyId: z.string().min(1).optional(),
-    metadata: jsonObjectSchema.optional(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentLocalIdentitySchema = strictObject({
+  role: agentLocalIdentityRoleSchema,
+  walletAlias: nonEmptyStringSchema,
+  walletAddress: evmAddressSchema,
+  identityWallet: evmAddressSchema,
+  chainId: positiveIntSchema,
+  mode: agentLocalIdentityModeSchema,
+  activeBindingDigest: bytes32HexSchema.optional(),
+  transportKeyId: nonEmptyStringSchema.optional(),
+  metadata: jsonObjectSchema.optional(),
+  createdAt: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const agentSignedArtifactSchema = z
-  .object({
-    id: z.string().min(1),
-    artifactType: agentSignedArtifactTypeSchema,
-    digest: bytes32HexSchema,
-    signer: evmAddressSchema,
-    identityWallet: evmAddressSchema,
-    chainId: z.number().int().positive(),
-    issuedAt: z.number().int().nonnegative(),
-    expiresAt: z.number().int().nonnegative(),
-    payload: jsonObjectSchema,
-    proof: jsonObjectSchema,
-    verificationStatus: agentSignedArtifactVerificationStatusSchema,
-    verificationError: z.string().optional(),
-    source: z.string().min(1),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentSignedArtifactSchema = strictObject({
+  id: nonEmptyStringSchema,
+  artifactType: agentSignedArtifactTypeSchema,
+  digest: bytes32HexSchema,
+  signer: evmAddressSchema,
+  identityWallet: evmAddressSchema,
+  chainId: positiveIntSchema,
+  issuedAt: nonNegativeIntSchema,
+  expiresAt: nonNegativeIntSchema,
+  payload: jsonObjectSchema,
+  proof: jsonObjectSchema,
+  verificationStatus: agentSignedArtifactVerificationStatusSchema,
+  verificationError: z.string().optional(),
+  source: nonEmptyStringSchema,
+  createdAt: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const agentContactSchema = z
-  .object({
-    contactId: z.string().min(1),
-    identityWallet: z.string().min(1),
-    legacyPeerId: z.string().min(1).optional(),
-    displayName: z.string().min(1).optional(),
-    handle: z.string().min(1).optional(),
-    status: agentContactStatusSchema,
-    supportedProtocols: z.array(z.string().min(1)),
-    capabilityProfile: z.string().min(1).optional(),
-    capabilities: z.array(z.string().min(1)),
-    metadata: jsonObjectSchema.optional(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentContactSchema = strictObject({
+  contactId: nonEmptyStringSchema,
+  identityWallet: nonEmptyStringSchema,
+  legacyPeerId: nonEmptyStringSchema.optional(),
+  displayName: nonEmptyStringSchema.optional(),
+  handle: nonEmptyStringSchema.optional(),
+  status: agentContactStatusSchema,
+  supportedProtocols: nonEmptyStringArraySchema,
+  capabilityProfile: nonEmptyStringSchema.optional(),
+  capabilities: nonEmptyStringArraySchema,
+  metadata: jsonObjectSchema.optional(),
+  createdAt: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const agentTransportEndpointSchema = z
-  .object({
-    id: z.string().min(1),
-    contactId: z.string().min(1),
-    identityWallet: z.string().min(1),
-    chainId: z.number().int().nonnegative(),
-    receiveAddress: z.string().min(1),
-    pubkey: z.string().min(1),
-    keyId: z.string().min(1),
-    bindingDigest: bytes32HexSchema.optional(),
-    endpointStatus: agentTransportEndpointStatusSchema,
-    source: z.string().min(1),
-    metadata: jsonObjectSchema.optional(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentTransportEndpointSchema = strictObject({
+  id: nonEmptyStringSchema,
+  contactId: nonEmptyStringSchema,
+  identityWallet: nonEmptyStringSchema,
+  chainId: nonNegativeIntSchema,
+  receiveAddress: nonEmptyStringSchema,
+  pubkey: nonEmptyStringSchema,
+  keyId: nonEmptyStringSchema,
+  bindingDigest: bytes32HexSchema.optional(),
+  endpointStatus: agentTransportEndpointStatusSchema,
+  source: nonEmptyStringSchema,
+  metadata: jsonObjectSchema.optional(),
+  createdAt: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const agentConnectionEventSchema = z
-  .object({
-    id: z.string().min(1),
-    contactId: z.string().min(1),
-    identityWallet: z.string().min(1),
-    direction: agentMessageDirectionSchema,
-    eventType: agentConnectionEventTypeSchema,
-    eventStatus: agentConnectionEventStatusSchema,
-    messageId: z.string().min(1).optional(),
-    txHash: z.string().min(1).optional(),
-    reason: z.string().optional(),
-    metadata: jsonObjectSchema.optional(),
-    occurredAt: z.string().min(1),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentConnectionEventSchema = strictObject({
+  id: nonEmptyStringSchema,
+  contactId: nonEmptyStringSchema,
+  identityWallet: nonEmptyStringSchema,
+  direction: agentMessageDirectionSchema,
+  eventType: agentConnectionEventTypeSchema,
+  eventStatus: agentConnectionEventStatusSchema,
+  messageId: nonEmptyStringSchema.optional(),
+  txHash: nonEmptyStringSchema.optional(),
+  reason: z.string().optional(),
+  metadata: jsonObjectSchema.optional(),
+  occurredAt: nonEmptyStringSchema,
+  createdAt: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const agentArtifactStatusSchema = z
-  .object({
-    artifactDigest: bytes32HexSchema,
-    artifactType: agentSignedArtifactTypeSchema,
-    identityWallet: z.string().min(1),
-    status: agentArtifactRevocationStatusSchema,
-    revokedByDigest: bytes32HexSchema.optional(),
-    revokedAt: z.number().int().nonnegative().optional(),
-    reason: z.string().optional(),
-    metadata: jsonObjectSchema.optional(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+export const agentArtifactStatusSchema = strictObject({
+  artifactDigest: bytes32HexSchema,
+  artifactType: agentSignedArtifactTypeSchema,
+  identityWallet: nonEmptyStringSchema,
+  status: agentArtifactRevocationStatusSchema,
+  revokedByDigest: bytes32HexSchema.optional(),
+  revokedAt: nonNegativeIntSchema.optional(),
+  reason: z.string().optional(),
+  metadata: jsonObjectSchema.optional(),
+  createdAt: nonEmptyStringSchema,
+  updatedAt: nonEmptyStringSchema,
+});
 
-export const x402ReceiptSchema = z
-  .object({
-    id: z.string().min(1),
-    messageId: z.string().min(1),
-    payer: z.string().min(1),
-    amount: z.string().min(1),
-    asset: z.string().min(1),
-    proof: x402ProofSchema,
-    verified: z.boolean(),
-    createdAt: z.string().min(1),
-  })
-  .strict();
+export const x402ReceiptSchema = strictObject({
+  id: nonEmptyStringSchema,
+  messageId: nonEmptyStringSchema,
+  payer: nonEmptyStringSchema,
+  amount: nonEmptyStringSchema,
+  asset: nonEmptyStringSchema,
+  proof: x402ProofSchema,
+  verified: z.boolean(),
+  createdAt: nonEmptyStringSchema,
+});
 
-export const agentCommStatusSchema = z
-  .object({
-    enabled: z.boolean(),
-    chainId: z.number().int().positive(),
-    listenerMode: commListenerModeSchema,
-    walletAlias: z.string().min(1),
-    x402Mode: x402ModeSchema,
-    peerCount: z.number().int().nonnegative(),
-    pendingMessageCount: z.number().int().nonnegative(),
-    lastCursor: listenerCursorSchema.optional(),
-  })
-  .strict();
+export const agentCommStatusSchema = strictObject({
+  enabled: z.boolean(),
+  chainId: positiveIntSchema,
+  listenerMode: commListenerModeSchema,
+  walletAlias: nonEmptyStringSchema,
+  x402Mode: x402ModeSchema,
+  peerCount: nonNegativeIntSchema,
+  pendingMessageCount: nonNegativeIntSchema,
+  lastCursor: listenerCursorSchema.optional(),
+});
 
 export type AgentCommandType = z.infer<typeof agentCommandTypeSchema>;
 export type AgentBusinessCommandType = (typeof agentBusinessCommandTypes)[number];
@@ -632,6 +553,7 @@ export type X402Proof = z.infer<typeof x402ProofSchema>;
 export type EncryptedEnvelopeV1 = z.infer<typeof encryptedEnvelopeV1Schema>;
 export type EncryptedEnvelopeV2 = z.infer<typeof encryptedEnvelopeV2Schema>;
 export type EncryptedEnvelope = z.infer<typeof encryptedEnvelopeSchema>;
+export type EncryptedEnvelopeV2Payment = z.infer<typeof encryptedEnvelopeV2PaymentSchema>;
 export type EncryptedEnvelopeV2Body = z.infer<typeof encryptedEnvelopeV2BodySchema>;
 export type AgentPeer = z.infer<typeof agentPeerSchema>;
 export type AgentMessage = z.infer<typeof agentMessageSchema>;

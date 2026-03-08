@@ -6,6 +6,7 @@ const listAgentContactsMock = vi.hoisted(() => vi.fn());
 const listAgentSignedArtifactsMock = vi.hoisted(() => vi.fn());
 const listAgentTransportEndpointsMock = vi.hoisted(() => vi.fn());
 const listAgentConnectionEventsMock = vi.hoisted(() => vi.fn());
+const getAgentContactByLegacyPeerIdMock = vi.hoisted(() => vi.fn());
 const storeCloseMock = vi.hoisted(() => vi.fn());
 const stateStoreCtorMock = vi.hoisted(() =>
   vi.fn(function MockStateStore(
@@ -14,6 +15,7 @@ const stateStoreCtorMock = vi.hoisted(() =>
       listAgentSignedArtifacts: typeof listAgentSignedArtifactsMock;
       listAgentTransportEndpoints: typeof listAgentTransportEndpointsMock;
       listAgentConnectionEvents: typeof listAgentConnectionEventsMock;
+      getAgentContactByLegacyPeerId: typeof getAgentContactByLegacyPeerIdMock;
       close: typeof storeCloseMock;
     },
     _dataDir: string,
@@ -22,11 +24,14 @@ const stateStoreCtorMock = vi.hoisted(() =>
     this.listAgentSignedArtifacts = listAgentSignedArtifactsMock;
     this.listAgentTransportEndpoints = listAgentTransportEndpointsMock;
     this.listAgentConnectionEvents = listAgentConnectionEventsMock;
+    this.getAgentContactByLegacyPeerId = getAgentContactByLegacyPeerIdMock;
     this.close = storeCloseMock;
   }),
 );
 const vaultCtorMock = vi.hoisted(() => vi.fn(function MockVaultService(_store: unknown) {}));
 const bootstrapAgentCommStateMock = vi.hoisted(() => vi.fn());
+const importIdentityArtifactBundleFromJsonMock = vi.hoisted(() => vi.fn());
+const registerTrustedPeerEntryMock = vi.hoisted(() => vi.fn());
 const rotateCommWalletMock = vi.hoisted(() => vi.fn());
 const sendCommConnectionInviteMock = vi.hoisted(() => vi.fn());
 const sendCommConnectionAcceptMock = vi.hoisted(() => vi.fn());
@@ -52,11 +57,13 @@ vi.mock("../src/skills/alphaos/runtime/agent-comm/entrypoints", () => ({
   bootstrapAgentCommState: bootstrapAgentCommStateMock,
   exportIdentityArtifactBundle: vi.fn(),
   getCommIdentity: vi.fn(),
-  importIdentityArtifactBundleFromJson: vi.fn(),
+  importIdentityArtifactBundleFromJson: importIdentityArtifactBundleFromJsonMock,
   initCommWallet: vi.fn(),
   initTemporaryDemoWallet: vi.fn(),
+  LEGACY_MANUAL_PEER_TRUST_WARNING:
+    "legacy/manual v1 fallback record created; prefer card import plus invite/accept for new contacts",
   listLocalIdentityProfiles: vi.fn(),
-  registerTrustedPeerEntry: vi.fn(),
+  registerTrustedPeerEntry: registerTrustedPeerEntryMock,
   rotateCommWallet: rotateCommWalletMock,
   sendCommConnectionAccept: sendCommConnectionAcceptMock,
   sendCommConnectionInvite: sendCommConnectionInviteMock,
@@ -100,6 +107,7 @@ beforeEach(() => {
   listAgentSignedArtifactsMock.mockReturnValue([]);
   listAgentTransportEndpointsMock.mockReturnValue([]);
   listAgentConnectionEventsMock.mockReturnValue([]);
+  getAgentContactByLegacyPeerIdMock.mockReturnValue(undefined);
   bootstrapAgentCommStateMock.mockReturnValue({
     legacyPeerBackfill: {
       processedPeers: 0,
@@ -126,6 +134,19 @@ beforeEach(() => {
     txHash: "0xtx-reject",
     contactId: "ct_reject",
   });
+  importIdentityArtifactBundleFromJsonMock.mockResolvedValue({
+    ok: true,
+    reasons: [],
+    failureCodes: [],
+    contactId: "ct_import",
+  });
+  registerTrustedPeerEntryMock.mockReturnValue({
+    peerId: "peer-b",
+    walletAddress: "0x2222222222222222222222222222222222222222",
+    pubkey: "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    status: "trusted",
+    capabilities: ["ping", "start_discovery"],
+  });
 });
 
 afterEach(() => {
@@ -146,8 +167,37 @@ describe("agent-comm CLI contact/connect commands", () => {
     expect(output).toContain("agent-comm:peer:trust    (legacy/manual v1 fallback)");
     expect(output).toContain("agent-comm:wallet:rotate");
     expect(output).toContain("Preferred flow: add contact via card import, then connect via invite/accept.");
-    expect(output).toContain("contactRef currently accepts contactId only.");
+    expect(output).toContain("Business send accepts a trusted peerId or contact:<contactId>.");
+    expect(output).toContain("agent-comm:card:import <file|raw-json|share-url>");
     expect(output).not.toContain("reserved, not implemented in this phase");
+  });
+
+  it("imports a card bundle from a share-url payload", async () => {
+    const inlineJson = JSON.stringify({ bundleVersion: 1 });
+    const shareUrl = `agentcomm://card?v=1&bundle=${Buffer.from(inlineJson).toString("base64url")}`;
+
+    const output = await runCli(["agent-comm:card:import", shareUrl]);
+
+    expect(importIdentityArtifactBundleFromJsonMock).toHaveBeenCalledWith(
+      {
+        config: expect.objectContaining({
+          dataDir: "/tmp/agent-comm-cli",
+        }),
+        store: expect.any(Object),
+      },
+      inlineJson,
+      {
+        source: `share-url:${shareUrl}`,
+      },
+    );
+    expect(JSON.parse(output)).toEqual({
+      action: "agent-comm:card:import",
+      inputSource: `share-url:${shareUrl}`,
+      ok: true,
+      reasons: [],
+      failureCodes: [],
+      contactId: "ct_import",
+    });
   });
 
   it("lists contacts through the CLI", async () => {
@@ -343,6 +393,45 @@ describe("agent-comm CLI contact/connect commands", () => {
       transportAddress: "0x9999999999999999999999999999999999999999",
       previousTransportAddress: "0x1111111111111111111111111111111111111111",
       graceExpiresAt: "2026-03-09T00:00:00.000Z",
+    });
+  });
+
+  it("emits a soft-deprecation warning for legacy manual peer trust", async () => {
+    const output = await runCli([
+      "agent-comm:peer:trust",
+      "peer-b",
+      "0x2222222222222222222222222222222222222222",
+      "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ]);
+
+    expect(registerTrustedPeerEntryMock).toHaveBeenCalledWith(
+      {
+        store: expect.any(Object),
+      },
+      {
+        peerId: "peer-b",
+        walletAddress: "0x2222222222222222222222222222222222222222",
+        pubkey: "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        name: undefined,
+        capabilities: undefined,
+        metadata: undefined,
+      },
+    );
+    expect(JSON.parse(output)).toEqual({
+      action: "agent-comm:peer:trust",
+      peer: {
+        peerId: "peer-b",
+        walletAddress: "0x2222222222222222222222222222222222222222",
+        pubkey: "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        status: "trusted",
+        capabilities: ["ping", "start_discovery"],
+      },
+      legacyManualRecord: true,
+      legacyMarkers: ["manual_peer_record"],
+      contactId: undefined,
+      warnings: [
+        "legacy/manual v1 fallback record created; prefer card import plus invite/accept for new contacts",
+      ],
     });
   });
 });

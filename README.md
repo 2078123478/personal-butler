@@ -97,12 +97,19 @@ This validates `quote -> swap -> (simulate)` without broadcasting and writes int
 - `GET /api/v1/agent-comm/status`
 - `GET /api/v1/agent-comm/messages?limit=50&peerId=&direction=inbound|outbound&status=...`
 - `GET /api/v1/agent-comm/peers?limit=100&status=pending|trusted|blocked|revoked`
+- `GET /api/v1/agent-comm/contacts?limit=100&status=&identityWallet=&legacyPeerId=`
 - `POST /api/v1/agent-comm/peers/trusted`
   with `{ "peerId":"peer-a","walletAddress":"0x...","pubkey":"0x...","name":"Peer A","capabilities":["ping"] }`
+- `POST /api/v1/agent-comm/cards/export`
+- `POST /api/v1/agent-comm/cards/import`
+- `POST /api/v1/agent-comm/connections/invite`
+- `POST /api/v1/agent-comm/connections/:contactId/accept`
+- `POST /api/v1/agent-comm/connections/:contactId/reject`
+- `POST /api/v1/agent-comm/wallets/rotate`
 - `POST /api/v1/agent-comm/send/ping`
-  with `{ "peerId":"peer-b","senderPeerId":"agent-a","echo":"hello","note":"smoke" }`
+  with `{ "peerId":"peer-b|contact:<contactId>","senderPeerId":"agent-a","echo":"hello","note":"smoke" }`
 - `POST /api/v1/agent-comm/send/start-discovery`
-  with `{ "peerId":"peer-b","strategyId":"spread-threshold","pairs":["ETH/USDC"],"durationMinutes":30,"sampleIntervalSec":5,"topN":10,"senderPeerId":"agent-a" }`
+  with `{ "peerId":"peer-b|contact:<contactId>","strategyId":"spread-threshold","pairs":["ETH/USDC"],"durationMinutes":30,"sampleIntervalSec":5,"topN":10,"senderPeerId":"agent-a" }`
 - `POST /api/v1/discovery/sessions/start`
   with `{ "strategyId":"spread-threshold|mean-reversion|volatility-breakout","pairs":["ETH/USDC"],"durationMinutes":30,"sampleIntervalSec":5,"topN":20 }`
 - `GET /api/v1/discovery/sessions/active`
@@ -124,11 +131,14 @@ VAULT_MASTER_PASSWORD=pass123 npm run dev -- vault:get trader-key
 - v2 正式设计文档（草案之后、实现拆解之前）：`docs/AGENT_COMM_V2_DESIGN.md`
 - v2 身份工件 typed-data 冻结：`docs/AGENT_COMM_V2_ARTIFACT_CONTRACTS.md`
 - v2 实施任务拆解（执行清单）：`AGENT_COMM_V2_TASK.md`
-- 最小复用入口（当前 runtime / v0.1）：`docs/AGENT_COMM_MIN_REUSE.md`
-- 用户说明书（当前 runtime）：`docs/AGENT_COMM_EXPLAINED.md`
+- Operator/developer runbook（默认执行路径）：`docs/AGENT_COMM_V2_OPERATIONS.md`
+- Card share/import packaging：`docs/AGENT_COMM_V2_CARD_PACKAGING.md`
+- Sample fixtures：`docs/examples/agent-comm/contact-card.sample.json`
+- Legacy/manual reference：`docs/AGENT_COMM_MIN_REUSE.md`
+- 用户说明书（早期 runtime 说明）：`docs/AGENT_COMM_EXPLAINED.md`
 - 隐私与建联分析：`docs/AGENT_COMM_PRIVACY_AND_TRUST_ANALYSIS.md`
 
-当前可运行入口仍以 `docs/AGENT_COMM_MIN_REUSE.md` 为准；`docs/AGENT_COMM_PROTOCOL_V2_DRAFT.md` 给出已批准的协议方向，`docs/AGENT_COMM_V2_DESIGN.md` 将这些决策整理为实现导向的正式设计。
+默认可运行入口已经切到 contact-first 的 v2 流程：先导出/导入 card，再 invite/accept，最后用 `contact:<contactId>` 或兼容的 `peerId` 发业务命令。`docs/AGENT_COMM_MIN_REUSE.md` 仅保留为 legacy/manual v1 兼容参考。
 
 1. Configure `.env`:
 ```bash
@@ -152,37 +162,49 @@ npm run dev -- agent-comm:help
 ```bash
 VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:wallet:init-demo
 ```
-5. Export and locally verify/import v2 identity artifacts:
+5. Export a contact card bundle. The CLI response now includes a `shareUrl` that can be copied directly into a QR code or short-link wrapper:
 ```bash
 VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:card:export --output ./my-card.json
-npm run dev -- agent-comm:card:import ./my-card.json
 ```
-6. Register a trusted peer with the legacy/manual v1 fallback flow:
+6. Import a peer card from a file, raw JSON string, or the exported `shareUrl`:
 ```bash
-npm run dev -- agent-comm:peer:trust peer-b 0x<peer_wallet_address> 0x<peer_pubkey>
+npm run dev -- agent-comm:card:import ./peer-card.json
+npm run dev -- agent-comm:card:import 'agentcomm://card?v=1&bundle=<base64url>'
 ```
-7. Send a command without wiring low-level modules:
+7. List contacts, send an invite, and accept it from the receiver side:
 ```bash
-VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:send ping peer-b --echo hello
-VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:send start_discovery peer-b --strategy-id spread-threshold
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:contacts:list
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:connect:invite <contactId>
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:connect:accept <contactId>
 ```
-8. Or send through the existing HTTP server using the same Bearer auth as other `/api/v1/*` routes:
+8. Send a trusted business command through the existing CLI surface using either `contact:<contactId>` or a compatible `peerId`:
+```bash
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:send ping contact:<contactId> --echo hello
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:send start_discovery contact:<contactId> --strategy-id spread-threshold
+```
+9. Or send through the existing HTTP server using the same Bearer auth as other `/api/v1/*` routes:
 ```bash
 curl -X POST http://127.0.0.1:3000/api/v1/agent-comm/send/ping \
   -H "Authorization: Bearer $API_SECRET" \
   -H "Content-Type: application/json" \
-  -d '{"peerId":"peer-b","echo":"hello"}'
+  -d '{"peerId":"contact:<contactId>","echo":"hello"}'
 
 curl -X POST http://127.0.0.1:3000/api/v1/agent-comm/send/start-discovery \
   -H "Authorization: Bearer $API_SECRET" \
   -H "Content-Type: application/json" \
-  -d '{"peerId":"peer-b","strategyId":"spread-threshold"}'
+  -d '{"peerId":"contact:<contactId>","strategyId":"spread-threshold"}'
 ```
-9. Start service with vault password when you want runtime receive/execute path:
+10. Start service with vault password when you want runtime receive/execute path:
 ```bash
 VAULT_MASTER_PASSWORD=pass123 npm run dev
 ```
-10. Query runtime status via `/api/v1/agent-comm/*` endpoints.
+11. Query runtime state via `/api/v1/agent-comm/*` endpoints. `GET /api/v1/agent-comm/status` now includes `legacyUsage` counts and thresholds so operators can see when v1 fallback/manual onboarding is still common.
+
+Legacy/manual fallback remains available when needed:
+```bash
+npm run dev -- agent-comm:peer:trust peer-b 0x<peer_wallet_address> 0x<peer_pubkey>
+```
+That route now returns an explicit warning because it creates a v1-oriented manual trust record rather than the preferred v2 contact flow.
 
 ## Notes
 - Business DB: `data/alpha.db`

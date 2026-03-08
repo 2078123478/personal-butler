@@ -84,7 +84,7 @@ Tasks:
   - v1 parser remains live
   - `agent-comm:peer:trust` remains available as legacy/manual fallback
   - existing single-wallet installs may temporarily act as LIW + ACW
-- [ ] `[Optional]` Define a shareable card packaging convention for URL/QR export so later UX work does not invent ad hoc encodings.
+- [x] `[Optional]` Define a shareable card packaging convention for URL/QR export so later UX work does not invent ad hoc encodings.
 
 Likely touchpoints:
 
@@ -107,7 +107,7 @@ Tasks:
   - Long-lived Identity Wallet (LIW)
   - Active Comm Wallet (ACW)
   - Temporary/Demo wallet
-- [ ] `[Core]` Extend vault/runtime initialization so fresh v2 installs can create distinct LIW and ACW roles without breaking current `agent-comm:wallet:init`.
+- [x] `[Core]` Extend vault/runtime initialization so fresh v2 installs can create distinct LIW and ACW roles without breaking current `agent-comm:wallet:init`.
 - [x] `[Core]` Add the migration bridge for existing installs:
   - detect existing single comm wallet
   - represent it as temporary LIW + ACW dual-use state
@@ -165,7 +165,7 @@ Tasks:
 - [x] `[Core]` Add a transport-endpoint table that stores active and historical receive endpoints per contact.
 - [x] `[Core]` Add a connection-event table for `connection_invite`, `connection_accept`, `connection_reject`, `connection_confirm`.
 - [x] `[Core]` Add a revocation table or equivalent artifact status model so older bindings/cards can be marked superseded later.
-- [ ] `[Core]` Extend `agent_messages` to carry v2-relevant fields without removing v1 fields:
+- [x] `[Core]` Extend `agent_messages` to carry v2-relevant fields without removing v1 fields:
   - `envelopeVersion`
   - `msgId`
   - `contactId`
@@ -255,8 +255,8 @@ Tasks:
   - current transport wallet
   - pending invites
 - [ ] `[Optional]` Add auto-accept as a policy toggle after the one-tap accept flow works.
-- [ ] `[Optional]` Add recommended capability templates such as `research-collab`.
-- [ ] `[Optional]` Add share/import via QR or short link once file/raw JSON import is stable.
+- [x] `[Optional]` Add recommended capability templates such as `research-collab`.
+- [x] `[Optional]` Add share/import via QR or short link once file/raw JSON import is stable.
 - [ ] `[Optional]` Add paid cold-inbound notification behavior after the reject-by-default path is solid.
 
 Likely touchpoints:
@@ -280,15 +280,15 @@ Exit criteria:
 
 Tasks:
 
-- [ ] `[Core]` Add envelope v2 schemas to replace the hardcoded v1-only `AGENT_COMM_ENVELOPE_VERSION = 1` assumption.
-- [ ] `[Core]` Add a versioned codec layer that can encode/decode both v1 and v2 envelopes.
-- [ ] `[Core]` Implement v2 outer envelope fields:
+- [x] `[Core]` Add envelope v2 schemas to replace the hardcoded v1-only `AGENT_COMM_ENVELOPE_VERSION = 1` assumption.
+- [x] `[Core]` Add a versioned codec layer that can encode/decode both v1 and v2 envelopes.
+- [x] `[Core]` Implement v2 outer envelope fields:
   - `version`
   - `kex.suite`
   - `kex.recipientKeyId`
   - `kex.ephemeralPubkey`
   - `ciphertext`
-- [ ] `[Core]` Implement v2 encrypted body fields:
+- [x] `[Core]` Implement v2 encrypted body fields:
   - `msgId`
   - `sentAt`
   - `sender.identityWallet`
@@ -297,26 +297,26 @@ Tasks:
   - encrypted `command`
   - encrypted payment metadata
   - optional `attachments.inlineCard`
-- [ ] `[Core]` Update outbound send logic so v2 messages:
+- [x] `[Core]` Update outbound send logic so v2 messages:
   - resolve the active transport endpoint from the contact model
   - generate `msgId`
   - choose `recipientKeyId`
   - persist `envelopeVersion=2`
   - stop duplicating recipient address in the envelope
-- [ ] `[Core]` Update inbound processing so v2 messages:
+- [x] `[Core]` Update inbound processing so v2 messages:
   - verify `tx.to`
   - select the local receive key via `recipientKeyId`
   - decrypt before command classification
   - verify `sender.transportAddress == tx.from`
   - verify sender transport authorization through a stored LIW binding
   - dedupe on `msgId`
-- [ ] `[Core]` Keep the v1 parser and v1 nonce-based dedupe path intact for legacy peers.
-- [ ] `[Core]` Add version negotiation on send:
+- [x] `[Core]` Keep the v1 parser and v1 nonce-based dedupe path intact for legacy peers.
+- [x] `[Core]` Add version negotiation on send:
   - track supported protocols per contact
   - default to highest mutual version
   - fall back to v1 only when the contact explicitly allows legacy
-- [ ] `[Core]` Update outbound/inbound persistence so both v1 and v2 messages are queryable from the existing messages surface.
-- [ ] `[Core]` Add bounded old-key support during ACW rotation so previous receive keys remain usable for a grace window.
+- [x] `[Core]` Update outbound/inbound persistence so both v1 and v2 messages are queryable from the existing messages surface.
+- [x] `[Core]` Add bounded old-key support during ACW rotation so previous receive keys remain usable for a grace window.
 - [ ] `[Optional]` Add richer payment/x402 handling inside the encrypted body after the baseline v2 path is stable.
 - [ ] `[Optional]` Add future suite-upgrade scaffolding beyond `secp256k1-ecdh-aes256gcm-v2` only if needed.
 
@@ -342,25 +342,25 @@ Exit criteria:
 
 Tasks:
 
-- [ ] `[Core]` Implement startup/backfill logic that upgrades existing trusted peers into v2 contact records while preserving current behavior.
-- [ ] `[Core]` Preserve current single-wallet installs as temporary LIW + ACW until the operator explicitly rotates.
-- [ ] `[Core]` Make fresh installs create the intended LIW/ACW split by default.
-- [ ] `[Core]` Keep these existing surfaces stable during migration:
+- [x] `[Core]` Implement startup/backfill logic that upgrades existing trusted peers into v2 contact records while preserving current behavior.
+- [x] `[Core]` Preserve current single-wallet installs as temporary LIW + ACW until the operator explicitly rotates.
+- [x] `[Core]` Make fresh installs create the intended LIW/ACW split by default.
+- [x] `[Core]` Keep these existing surfaces stable during migration:
   - `agent-comm:wallet:init`
   - `agent-comm:identity`
   - `agent-comm:send ...`
   - `GET /api/v1/agent-comm/status`
   - `GET /api/v1/agent-comm/messages`
   - existing business send endpoints
-- [ ] `[Core]` Update response payloads carefully so old callers do not break when new v2 fields appear.
-- [ ] `[Core]` Add explicit legacy markers in CLI/API output for:
+- [x] `[Core]` Update response payloads carefully so old callers do not break when new v2 fields appear.
+- [x] `[Core]` Add explicit legacy markers in CLI/API output for:
   - v1-only contacts
   - legacy fallback sends
   - manual `peer:trust` records
-- [ ] `[Core]` Add `agent-comm:wallet:rotate` and `POST /api/v1/agent-comm/wallets/rotate` once the binding and old-key grace path work.
-- [ ] `[Core]` Change product guidance and default docs from "register trusted peer" to "add contact".
-- [ ] `[Optional]` Add soft-deprecation warnings when operators create new v1-only peers manually.
-- [ ] `[Optional]` Add legacy-usage telemetry thresholds to decide when v1 onboarding can be discouraged more aggressively.
+- [x] `[Core]` Add `agent-comm:wallet:rotate` and `POST /api/v1/agent-comm/wallets/rotate` once the binding and old-key grace path work.
+- [x] `[Core]` Change product guidance and default docs from "register trusted peer" to "add contact".
+- [x] `[Optional]` Add soft-deprecation warnings when operators create new v1-only peers manually.
+- [x] `[Optional]` Add legacy-usage telemetry thresholds to decide when v1 onboarding can be discouraged more aggressively.
 
 Likely touchpoints:
 
@@ -381,7 +381,7 @@ Exit criteria:
 
 Tasks:
 
-- [ ] `[Core]` Add unit tests for:
+- [x] `[Core]` Add unit tests for:
   - `EIP-712` sign/verify for card and binding artifacts
   - artifact digest/fingerprint logic
   - contact-card import validation
@@ -389,34 +389,34 @@ Tasks:
   - version negotiation
   - v2 codec encode/decode
   - v2 replay/dedupe behavior
-- [ ] `[Core]` Add store migration tests for:
+- [x] `[Core]` Add store migration tests for:
   - fresh database bootstrap
   - existing v1 database upgrade
   - repeated startup/backfill idempotency
-- [ ] `[Core]` Extend runtime tests to cover:
+- [x] `[Core]` Extend runtime tests to cover:
   - unknown inbound invite acceptance path
   - unknown inbound business rejection path
   - `tx.from` vs bound transport verification
   - LIW/ACW rotation grace period
   - mixed v1/v2 inbox handling
-- [ ] `[Core]` Extend API tests to cover new contact/card/connection routes and backward compatibility on existing routes.
-- [ ] `[Core]` Extend CLI/entrypoint tests to cover card export/import, invite commands, and wallet rotation.
-- [ ] `[Core]` Add end-to-end smoke coverage using two runtimes and both version combinations:
+- [x] `[Core]` Extend API tests to cover new contact/card/connection routes and backward compatibility on existing routes.
+- [x] `[Core]` Extend CLI/entrypoint tests to cover card export/import, invite commands, and wallet rotation.
+- [x] `[Core]` Add end-to-end smoke coverage using two runtimes and both version combinations:
   - v2 -> v2
   - v2 -> v1 fallback
   - v1 -> v2 legacy receive
-- [ ] `[Core]` Update or replace the demo scripts so the default walkthrough demonstrates:
+- [x] `[Core]` Update or replace the demo scripts so the default walkthrough demonstrates:
   - card export/import
   - invite/accept
   - trusted business send after trust exists
-- [ ] `[Core]` Write operator/developer docs for:
+- [x] `[Core]` Write operator/developer docs for:
   - LIW vs ACW roles
   - migration behavior
   - legacy fallback behavior
   - wallet rotation and recovery
   - contact-first CLI/API examples
-- [ ] `[Core]` Update `README.md` once implementation lands so it points to the final v2 execution and usage docs.
-- [ ] `[Optional]` Add sample card JSON fixtures, QR examples, and a troubleshooting runbook for failed binding verification.
+- [x] `[Core]` Update `README.md` once implementation lands so it points to the final v2 execution and usage docs.
+- [x] `[Optional]` Add sample card JSON fixtures, QR examples, and a troubleshooting runbook for failed binding verification.
 
 Likely touchpoints:
 

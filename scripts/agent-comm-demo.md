@@ -1,156 +1,47 @@
-# Agent-Comm 联调演示脚本
+# Agent-Comm v2 Demo Walkthrough
 
-## 演示目标
+This is the default two-runtime walkthrough for Agent-Comm v2 in this repo.
 
-用 Network Profile 推荐路径，跑通双实例 Agent-Comm 通信：
-1. 初始化两个实例的通信钱包
-2. 互相注册为 trusted peer
-3. Instance A 发送 ping → Instance B 接收
-4. Instance A 发送 start_discovery → Instance B 创建 discovery session
+Flow:
+1. initialize A + B
+2. export signed cards
+3. import cards on the opposite side
+4. start listeners
+5. send `connection_invite`
+6. send `connection_accept`
+7. send a trusted business command with `contact:<contactId>`
 
-## 环境准备
+## Run it
 
-### Instance A（发送方）
 ```bash
-cd /home/wilsen/apps/apps/onchainos
-export NETWORK_PROFILE_ID=xlayer-recommended
-export VAULT_MASTER_PASSWORD=pass123
-export API_SECRET=demo-secret-a
-export PORT=3001
-export DATA_DIR=data-a
+./scripts/agent-comm-demo.sh
 ```
 
-### Instance B（接收方 + listener）
+## Clean demo data
+
 ```bash
-cd /home/wilsen/apps/apps/onchainos
-export NETWORK_PROFILE_ID=xlayer-recommended
-export VAULT_MASTER_PASSWORD=pass123
-export API_SECRET=demo-secret-b
-export PORT=3002
-export DATA_DIR=data-b
-export COMM_ENABLED=true
-export COMM_LISTENER_MODE=poll
-export COMM_POLL_INTERVAL_MS=3000
+./scripts/agent-comm-demo.sh clean
 ```
 
-## 演示步骤
+## Notes
+- The script demonstrates the contact-first v2 flow, not the old `peer:trust` bootstrap.
+- `agent-comm:card:export` emits `shareUrl`, and the script intentionally imports one side from that share-url form.
+- Direct-tx sends still require gas on the active comm wallets.
+- Runtime logs are written to `data-a/runtime.log` and `data-b/runtime.log`.
 
-### Step 1: 初始化 Instance A 钱包
+## Key commands used by the script
+
 ```bash
-cd /home/wilsen/apps/apps/onchainos
-export NETWORK_PROFILE_ID=xlayer-recommended
-export VAULT_MASTER_PASSWORD=pass123
-export DATA_DIR=data-a
-
-npm run dev -- agent-comm:wallet:init
-# 记录输出：address_a, pubkey_a, defaultSenderPeerId_a
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:wallet:init
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:card:export --output ./agent.card.json
+npm run dev -- agent-comm:card:import ./agent.card.json
+npm run dev -- agent-comm:card:import 'agentcomm://card?v=1&bundle=<base64url>'
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:connect:invite <contactId>
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:connect:accept <contactId>
+VAULT_MASTER_PASSWORD=pass123 npm run dev -- agent-comm:send ping contact:<contactId> --echo hello
 ```
 
-### Step 2: 初始化 Instance B 钱包
-```bash
-export DATA_DIR=data-b
-npm run dev -- agent-comm:wallet:init
-# 记录输出：address_b, pubkey_b, defaultSenderPeerId_b
-```
-
-### Step 3: Instance A 注册 Instance B 为 trusted peer
-```bash
-npm run dev -- agent-comm:peer:trust \
-  peer-b \
-  <address_b> \
-  <pubkey_b> \
-  --name "Instance B" \
-  --capabilities ping,start_discovery
-```
-
-### Step 4: Instance B 注册 Instance A 为 trusted peer
-```bash
-export DATA_DIR=data-b
-npm run dev -- agent-comm:peer:trust \
-  peer-a \
-  <address_a> \
-  <pubkey_a> \
-  --name "Instance A" \
-  --capabilities ping,start_discovery
-```
-
-### Step 5: 启动 Instance B（带 listener）
-```bash
-export DATA_DIR=data-b
-export COMM_ENABLED=true
-export COMM_LISTENER_MODE=poll
-npm run dev
-# 保持后台运行
-```
-
-### Step 6: Instance A 发送 ping
-```bash
-export DATA_DIR=data-a
-npm run dev -- agent-comm:send ping peer-b --echo "Hello from A!" --note "demo"
-```
-
-### Step 7: Instance A 发送 start_discovery
-```bash
-npm run dev -- agent-comm:send start_discovery peer-b \
-  --strategy-id spread-threshold \
-  --pairs ETH/USDC,BTC/USDC \
-  --duration-minutes 5 \
-  --sample-interval-sec 3 \
-  --top-n 5
-```
-
-### Step 8: 验证结果
-```bash
-# 查看 Instance B 的 discovery session
-curl -s http://localhost:3002/api/v1/discovery/sessions/active | jq
-
-# 查看 Instance A 的发送历史
-curl -s http://localhost:3001/api/v1/agent-comm/messages?limit=10 | jq
-
-# 查看 Instance B 的接收历史
-curl -s http://localhost:3002/api/v1/agent-comm/messages?limit=10 | jq
-```
-
-## 预期输出
-
-### Wallet Init
-```json
-{
-  "address": "0x...",
-  "pubkey": "0x...",
-  "chainId": 196,
-  "walletAlias": "agent-comm",
-  "defaultSenderPeerId": "agent-comm"
-}
-```
-
-### Ping 发送成功
-```json
-{
-  "status": "sent",
-  "messageId": "...",
-  "peerId": "peer-b",
-  "command": "ping",
-  "echo": "Hello from A!"
-}
-```
-
-### Discovery Session 创建
-```json
-{
-  "sessionId": "...",
-  "strategyId": "spread-threshold",
-  "status": "running",
-  "pairs": ["ETH/USDC", "BTC/USDC"],
-  "durationMinutes": 5,
-  "sampleIntervalSec": 3,
-  "topN": 5
-}
-```
-
-## 清理
-```bash
-# 停止 Instance B（Ctrl+C）
-# 清理数据目录（可选）
-rm -rf data-a data-b
-```
+## Troubleshooting
+- `insufficient funds`: fund the ACW that is sending the direct transaction.
+- `Contact is not trusted`: wait for the invite/accept round-trip or inspect `agent-comm:contacts:list`.
+- invite not applied: confirm both runtimes are running with `COMM_ENABLED=true` and `COMM_LISTENER_MODE=poll`.

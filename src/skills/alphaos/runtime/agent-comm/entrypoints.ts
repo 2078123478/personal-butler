@@ -30,6 +30,14 @@ import {
   signIdentityArtifactBundle,
   verifySignedIdentityArtifactBundle,
 } from "./artifact-workflow";
+import { buildIdentityArtifactBundleShareUrl } from "./card-packaging";
+import {
+  getPendingInviteEvent,
+  normalizeOptionalStringList,
+  normalizeOptionalText,
+  readConnectionEventMetadataString,
+  readConnectionEventMetadataStringArray,
+} from "./connection-helpers";
 import {
   AGENT_COMM_KEX_SUITE_V2,
   AGENT_COMM_LEGACY_ENVELOPE_VERSION,
@@ -53,11 +61,17 @@ import {
   type PingCommandPayload,
   type StartDiscoveryCommandPayload,
 } from "./types";
+import {
+  persistSignedContactCardArtifact,
+  persistSignedTransportBindingArtifact,
+} from "./signed-artifact-store";
 
 const DEFAULT_TRUSTED_PEER_CAPABILITIES: AgentPeerCapability[] = ["ping", "start_discovery"];
 const DEFAULT_CONTACT_CARD_PROTOCOLS = ["agent-comm/2", "agent-comm/1"] as const;
 const DEFAULT_CONTACT_CARD_EXPIRY_DAYS = 180;
 const DEFAULT_TEMPORARY_DEMO_WALLET_ALIAS_SUFFIX = "-demo";
+export const LEGACY_MANUAL_PEER_TRUST_WARNING =
+  "legacy/manual v1 fallback record created; prefer card import plus invite/accept for new contacts";
 
 export const identityArtifactFailureCodes = [
   "bad_signature",
@@ -126,6 +140,7 @@ export interface RotateCommWalletResult extends AgentCommIdentity {
   contactCardFingerprint: string;
   transportBindingDigest: string;
   transportBindingFingerprint: string;
+  shareUrl: string;
 }
 
 export interface InitTemporaryDemoWalletResult extends AgentCommIdentity {
@@ -165,6 +180,11 @@ interface ResolvedCommRecipient {
   peerId: string;
   walletAddress: string;
   pubkey: string;
+}
+
+interface ResolvedBusinessSendTarget {
+  peer?: AgentPeer;
+  contactTarget?: ResolvedOutboundContactTarget;
 }
 
 interface ResolvedOutboundContactTarget {
@@ -237,6 +257,7 @@ export interface ExportIdentityArtifactBundleResult {
   contactCardFingerprint: string;
   transportBindingDigest: string;
   transportBindingFingerprint: string;
+  shareUrl: string;
 }
 
 export interface ImportIdentityArtifactBundleResult {
@@ -370,6 +391,38 @@ function getTrustedPeer(store: StateStore, peerId: string): AgentPeer {
   return peer;
 }
 
+function resolveTrustedSendTarget(
+  store: StateStore,
+  peerId: string,
+): ResolvedBusinessSendTarget {
+  const trustedPeer = store.getAgentPeer(peerId);
+  if (trustedPeer) {
+    if (trustedPeer.status !== "trusted") {
+      throw new Error(`Peer is not trusted: ${peerId}`);
+    }
+
+    return {
+      peer: trustedPeer,
+      contactTarget: resolveContactTargetForTrustedPeer(store, trustedPeer) ?? undefined,
+    };
+  }
+
+  const contactRefPrefix = "contact:";
+  const trustedContact = peerId.startsWith(contactRefPrefix)
+    ? store.getAgentContact(peerId.slice(contactRefPrefix.length))
+    : store.getAgentContactByLegacyPeerId(peerId);
+  if (!trustedContact) {
+    throw new Error(`Trusted peer or contact not found: ${peerId}`);
+  }
+  if (trustedContact.status !== "trusted") {
+    throw new Error(`Contact is not trusted: ${peerId}`);
+  }
+
+  return {
+    contactTarget: resolveOutboundContactTarget(store, trustedContact.contactId),
+  };
+}
+
 function ensurePositiveInteger(value: number, label: string): number {
   if (!Number.isInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive integer`);
@@ -395,19 +448,6 @@ function defaultKeyId(nowUnixSeconds: number): string {
 
 function defaultTemporaryDemoWalletAlias(config: AlphaOsConfig): string {
   return `${config.commWalletAlias}${DEFAULT_TEMPORARY_DEMO_WALLET_ALIAS_SUFFIX}`;
-}
-
-function normalizeOptionalText(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
-}
-
-function normalizeOptionalStringList(values: string[] | undefined): string[] | undefined {
-  if (!values || values.length === 0) {
-    return undefined;
-  }
-  const normalized = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-  return normalized.length > 0 ? normalized : undefined;
 }
 
 function resolveContactById(store: StateStore, contactId: string): AgentContact {
@@ -517,40 +557,6 @@ function upsertOutboundConnectionEvent(
   });
 }
 
-function readConnectionEventMetadataString(
-  event: AgentConnectionEvent | undefined,
-  key: string,
-): string | undefined {
-  const value = event?.metadata?.[key];
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-
-function readConnectionEventMetadataStringArray(
-  event: AgentConnectionEvent | undefined,
-  key: string,
-): string[] | undefined {
-  const value = event?.metadata?.[key];
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const normalized = [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0))];
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function getPendingInviteEvent(
-  store: StateStore,
-  contactId: string,
-  direction: "inbound" | "outbound",
-): AgentConnectionEvent | undefined {
-  return store.listAgentConnectionEvents(1, {
-    contactId,
-    direction,
-    eventType: "connection_invite",
-    eventStatus: "pending",
-  })[0];
-}
-
 interface OutboundInlineCardAttachment {
   bundle: AgentCommSignedIdentityArtifactBundle;
   contactCardDigest: string;
@@ -604,72 +610,55 @@ function classifyIdentityArtifactFailures(reasons: string[]): IdentityArtifactFa
   return [...new Set(codes)];
 }
 
-function persistSignedContactCardArtifact(
+function buildInlineCardDigestMetadata(
+  attachment: OutboundInlineCardAttachment | undefined,
+): Record<string, unknown> {
+  if (!attachment) {
+    return {};
+  }
+
+  return {
+    inlineCardContactCardDigest: attachment.contactCardDigest,
+    inlineCardTransportBindingDigest: attachment.transportBindingDigest,
+  };
+}
+
+function recordOutboundConnectionEvent(
   store: StateStore,
-  artifact: AgentCommSignedContactCardArtifact,
-  digest: string,
-  source: string,
-  verificationStatus: "verified" | "invalid",
-  verificationError?: string,
-): void {
-  store.upsertAgentSignedArtifact({
-    artifactType: "ContactCard",
-    digest,
-    signer: artifact.proof.signer,
-    identityWallet: artifact.identityWallet,
-    chainId: artifact.transport.chainId,
-    issuedAt: artifact.issuedAt,
-    expiresAt: artifact.expiresAt,
-    payload: {
-      cardVersion: artifact.cardVersion,
-      protocols: artifact.protocols,
-      displayName: artifact.displayName,
-      handle: artifact.handle,
-      identityWallet: artifact.identityWallet,
-      transport: artifact.transport,
-      defaults: artifact.defaults,
-      issuedAt: artifact.issuedAt,
-      expiresAt: artifact.expiresAt,
-      legacyPeerId: artifact.legacyPeerId,
-    },
-    proof: artifact.proof as unknown as Record<string, unknown>,
-    verificationStatus,
-    verificationError,
-    source,
+  input: {
+    sent: SendCommCommandResult;
+    contact: AgentContact;
+    eventType: AgentConnectionEventType;
+    eventStatus: AgentConnectionEventStatus;
+    reason?: string;
+    metadata?: Record<string, unknown>;
+  },
+): AgentConnectionEvent {
+  return upsertOutboundConnectionEvent(store, {
+    contact: input.contact,
+    eventType: input.eventType,
+    eventStatus: input.eventStatus,
+    messageId: findOutboundMessageId(store, input.sent.peerId, input.sent.nonce),
+    txHash: input.sent.txHash,
+    reason: input.reason,
+    occurredAt: input.sent.sentAt,
+    metadata: input.metadata,
   });
 }
 
-function persistSignedTransportBindingArtifact(
-  store: StateStore,
-  artifact: AgentCommSignedTransportBindingArtifact,
-  digest: string,
-  source: string,
-  verificationStatus: "verified" | "invalid",
-  verificationError?: string,
-): void {
-  store.upsertAgentSignedArtifact({
-    artifactType: "TransportBinding",
-    digest,
-    signer: artifact.proof.signer,
-    identityWallet: artifact.identityWallet,
-    chainId: artifact.chainId,
-    issuedAt: artifact.issuedAt,
-    expiresAt: artifact.expiresAt,
-    payload: {
-      bindingVersion: artifact.bindingVersion,
-      identityWallet: artifact.identityWallet,
-      chainId: artifact.chainId,
-      receiveAddress: artifact.receiveAddress,
-      pubkey: artifact.pubkey,
-      keyId: artifact.keyId,
-      issuedAt: artifact.issuedAt,
-      expiresAt: artifact.expiresAt,
-    },
-    proof: artifact.proof as unknown as Record<string, unknown>,
-    verificationStatus,
-    verificationError,
-    source,
-  });
+function buildConnectionCommandResult(
+  sent: SendCommCommandResult,
+  contact: AgentContact,
+  event: AgentConnectionEvent,
+): SendCommConnectionCommandResult {
+  return {
+    ...sent,
+    contactId: contact.contactId,
+    contactStatus: contact.status,
+    connectionEventId: event.id,
+    connectionEventType: event.eventType,
+    connectionEventStatus: event.eventStatus,
+  };
 }
 
 function materializeImportedContact(
@@ -921,6 +910,7 @@ export async function rotateCommWallet(
     contactCardFingerprint: exported.contactCardFingerprint,
     transportBindingDigest: exported.transportBindingDigest,
     transportBindingFingerprint: exported.transportBindingFingerprint,
+    shareUrl: exported.shareUrl,
   };
 }
 
@@ -975,20 +965,16 @@ export async function exportIdentityArtifactBundle(
     );
   }
 
-  persistSignedContactCardArtifact(
-    deps.store,
-    verification.contactCard.artifact,
-    verification.contactCard.digest,
-    "local_export",
-    "verified",
-  );
-  persistSignedTransportBindingArtifact(
-    deps.store,
-    verification.transportBinding.artifact,
-    verification.transportBinding.digest,
-    "local_export",
-    "verified",
-  );
+  persistSignedContactCardArtifact(deps.store, verification.contactCard.artifact, {
+    digest: verification.contactCard.digest,
+    source: "local_export",
+    verificationStatus: "verified",
+  });
+  persistSignedTransportBindingArtifact(deps.store, verification.transportBinding.artifact, {
+    digest: verification.transportBinding.digest,
+    source: "local_export",
+    verificationStatus: "verified",
+  });
   deps.store.upsertAgentLocalIdentity({
     role: "acw",
     walletAlias: local.state.acwProfile.walletAlias,
@@ -1013,6 +999,7 @@ export async function exportIdentityArtifactBundle(
     contactCardFingerprint: verification.contactCard.fingerprint,
     transportBindingDigest: verification.transportBinding.digest,
     transportBindingFingerprint: verification.transportBinding.fingerprint,
+    shareUrl: buildIdentityArtifactBundleShareUrl(bundle),
   };
 }
 
@@ -1034,25 +1021,21 @@ export async function importIdentityArtifactBundle(
   let importedContact: { contact: AgentContact; endpoint: AgentTransportEndpoint } | null = null;
 
   if (verification.contactCard) {
-    persistSignedContactCardArtifact(
-      deps.store,
-      verification.contactCard.artifact,
-      verification.contactCard.digest,
+    persistSignedContactCardArtifact(deps.store, verification.contactCard.artifact, {
+      digest: verification.contactCard.digest,
       source,
-      verification.contactCard.ok ? "verified" : "invalid",
-      verification.contactCard.ok ? undefined : reasons.join("; "),
-    );
+      verificationStatus: verification.contactCard.ok ? "verified" : "invalid",
+      verificationError: verification.contactCard.ok ? undefined : reasons.join("; "),
+    });
   }
 
   if (verification.transportBinding) {
-    persistSignedTransportBindingArtifact(
-      deps.store,
-      verification.transportBinding.artifact,
-      verification.transportBinding.digest,
+    persistSignedTransportBindingArtifact(deps.store, verification.transportBinding.artifact, {
+      digest: verification.transportBinding.digest,
       source,
-      verification.transportBinding.ok ? "verified" : "invalid",
-      verification.transportBinding.ok ? undefined : reasons.join("; "),
-    );
+      verificationStatus: verification.transportBinding.ok ? "verified" : "invalid",
+      verificationError: verification.transportBinding.ok ? undefined : reasons.join("; "),
+    });
   }
 
   if (verification.ok && verification.contactCard && verification.transportBinding) {
@@ -1372,10 +1355,15 @@ export async function sendCommCommand(
   deps: AgentCommEntrypointDependencies,
   options: SendCommCommandOptions,
 ): Promise<SendCommCommandResult> {
-  const peer = getTrustedPeer(deps.store, options.peerId);
-  const contactTarget = resolveContactTargetForTrustedPeer(deps.store, peer);
+  const target = resolveTrustedSendTarget(deps.store, options.peerId);
+  const peer = target.peer;
+  const contactTarget = target.contactTarget;
 
   if (!contactTarget) {
+    if (!peer) {
+      throw new Error(`Trusted contact has no active transport route: ${options.peerId}`);
+    }
+
     return sendCommCommandV1ToRecipient(deps, {
       masterPassword: options.masterPassword,
       senderPeerId: options.senderPeerId,
@@ -1403,9 +1391,9 @@ export async function sendCommCommand(
     masterPassword: options.masterPassword,
     senderPeerId: options.senderPeerId,
     recipient: {
-      peerId: peer.peerId,
-      walletAddress: peer.walletAddress,
-      pubkey: peer.pubkey,
+      peerId: contactTarget.peerId,
+      walletAddress: contactTarget.endpoint.receiveAddress,
+      pubkey: contactTarget.endpoint.pubkey,
     },
     contact: contactTarget.contact,
     command: options.command,
@@ -1541,35 +1529,21 @@ export async function sendCommConnectionInvite(
   const updatedContact = updateContactStatus(deps.store, target.contact, {
     status: "pending_outbound",
   });
-  const event = upsertOutboundConnectionEvent(deps.store, {
+  const event = recordOutboundConnectionEvent(deps.store, {
+    sent,
     contact: updatedContact,
     eventType: "connection_invite",
     eventStatus: "pending",
-    messageId: findOutboundMessageId(deps.store, sent.peerId, sent.nonce),
-    txHash: sent.txHash,
     reason: note,
-    occurredAt: sent.sentAt,
     metadata: {
       requestedProfile,
       requestedCapabilities,
       senderPeerId: sent.senderPeerId,
-      ...(inlineCardAttachment
-        ? {
-            inlineCardContactCardDigest: inlineCardAttachment.contactCardDigest,
-            inlineCardTransportBindingDigest: inlineCardAttachment.transportBindingDigest,
-          }
-        : {}),
+      ...buildInlineCardDigestMetadata(inlineCardAttachment),
     },
   });
 
-  return {
-    ...sent,
-    contactId: updatedContact.contactId,
-    contactStatus: updatedContact.status,
-    connectionEventId: event.id,
-    connectionEventType: event.eventType,
-    connectionEventStatus: event.eventStatus,
-  };
+  return buildConnectionCommandResult(sent, updatedContact, event);
 }
 
 export async function sendCommConnectionAccept(
@@ -1582,11 +1556,11 @@ export async function sendCommConnectionAccept(
   const pendingInvite = getPendingInviteEvent(deps.store, target.contact.contactId, "inbound");
   const capabilityProfile =
     normalizeOptionalText(options.capabilityProfile) ??
-    readConnectionEventMetadataString(pendingInvite, "requestedProfile") ??
+    readConnectionEventMetadataString(pendingInvite?.metadata, "requestedProfile") ??
     target.contact.capabilityProfile;
   const capabilities =
     normalizeOptionalStringList(options.capabilities) ??
-    readConnectionEventMetadataStringArray(pendingInvite, "requestedCapabilities") ??
+    readConnectionEventMetadataStringArray(pendingInvite?.metadata, "requestedCapabilities") ??
     target.contact.capabilities;
   const note = normalizeOptionalText(options.note);
   const inlineCardAttachment = await resolveOutboundInlineCardAttachment(deps, {
@@ -1616,35 +1590,21 @@ export async function sendCommConnectionAccept(
     capabilityProfile,
     capabilities,
   });
-  const event = upsertOutboundConnectionEvent(deps.store, {
+  const event = recordOutboundConnectionEvent(deps.store, {
+    sent,
     contact: updatedContact,
     eventType: "connection_accept",
     eventStatus: "applied",
-    messageId: findOutboundMessageId(deps.store, sent.peerId, sent.nonce),
-    txHash: sent.txHash,
     reason: note,
-    occurredAt: sent.sentAt,
     metadata: {
       capabilityProfile,
       capabilities,
       senderPeerId: sent.senderPeerId,
-      ...(inlineCardAttachment
-        ? {
-            inlineCardContactCardDigest: inlineCardAttachment.contactCardDigest,
-            inlineCardTransportBindingDigest: inlineCardAttachment.transportBindingDigest,
-          }
-        : {}),
+      ...buildInlineCardDigestMetadata(inlineCardAttachment),
     },
   });
 
-  return {
-    ...sent,
-    contactId: updatedContact.contactId,
-    contactStatus: updatedContact.status,
-    connectionEventId: event.id,
-    connectionEventType: event.eventType,
-    connectionEventStatus: event.eventStatus,
-  };
+  return buildConnectionCommandResult(sent, updatedContact, event);
 }
 
 export async function sendCommConnectionReject(
@@ -1673,14 +1633,12 @@ export async function sendCommConnectionReject(
   const updatedContact = updateContactStatus(deps.store, target.contact, {
     status: "imported",
   });
-  const event = upsertOutboundConnectionEvent(deps.store, {
+  const event = recordOutboundConnectionEvent(deps.store, {
+    sent,
     contact: updatedContact,
     eventType: "connection_reject",
     eventStatus: "applied",
-    messageId: findOutboundMessageId(deps.store, sent.peerId, sent.nonce),
-    txHash: sent.txHash,
     reason: reason ?? note,
-    occurredAt: sent.sentAt,
     metadata: {
       reason,
       note,
@@ -1688,14 +1646,7 @@ export async function sendCommConnectionReject(
     },
   });
 
-  return {
-    ...sent,
-    contactId: updatedContact.contactId,
-    contactStatus: updatedContact.status,
-    connectionEventId: event.id,
-    connectionEventType: event.eventType,
-    connectionEventStatus: event.eventStatus,
-  };
+  return buildConnectionCommandResult(sent, updatedContact, event);
 }
 
 export async function sendCommConnectionConfirm(
@@ -1729,31 +1680,17 @@ export async function sendCommConnectionConfirm(
   const updatedContact = updateContactStatus(deps.store, target.contact, {
     status: "trusted",
   });
-  const event = upsertOutboundConnectionEvent(deps.store, {
+  const event = recordOutboundConnectionEvent(deps.store, {
+    sent,
     contact: updatedContact,
     eventType: "connection_confirm",
     eventStatus: "applied",
-    messageId: findOutboundMessageId(deps.store, sent.peerId, sent.nonce),
-    txHash: sent.txHash,
     reason: note,
-    occurredAt: sent.sentAt,
     metadata: {
       senderPeerId: sent.senderPeerId,
-      ...(inlineCardAttachment
-        ? {
-            inlineCardContactCardDigest: inlineCardAttachment.contactCardDigest,
-            inlineCardTransportBindingDigest: inlineCardAttachment.transportBindingDigest,
-          }
-        : {}),
+      ...buildInlineCardDigestMetadata(inlineCardAttachment),
     },
   });
 
-  return {
-    ...sent,
-    contactId: updatedContact.contactId,
-    contactStatus: updatedContact.status,
-    connectionEventId: event.id,
-    connectionEventType: event.eventType,
-    connectionEventStatus: event.eventStatus,
-  };
+  return buildConnectionCommandResult(sent, updatedContact, event);
 }

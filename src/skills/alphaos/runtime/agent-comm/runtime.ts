@@ -234,6 +234,10 @@ function createTransactionHandler(
   input: ReturnType<typeof resolveLocalIdentityState>,
   setRuntimeError: (code: string, message: string, details?: Record<string, unknown>) => void,
 ): (event: TransactionEvent) => Promise<void> {
+  const inboxConfig = {
+    commAutoAcceptInvites: options.config.commAutoAcceptInvites,
+  };
+
   return async (event: TransactionEvent): Promise<void> => {
     try {
       const result = await processInbox(
@@ -242,6 +246,7 @@ function createTransactionHandler(
           receiveKeys: input.receiveKeys,
           store: options.store,
           expectedChainId: options.config.commChainId,
+          config: inboxConfig,
         },
         event,
       );

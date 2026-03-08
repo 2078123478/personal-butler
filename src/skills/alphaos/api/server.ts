@@ -15,6 +15,7 @@ import type { BacktestSnapshotRow, RiskPolicy, SkillManifest } from "../types";
 import {
   exportIdentityArtifactBundle,
   importIdentityArtifactBundle,
+  LEGACY_MANUAL_PEER_TRUST_WARNING,
   registerTrustedPeerEntry,
   rotateCommWallet,
   sendCommConnectionAccept,
@@ -25,6 +26,7 @@ import {
   type AgentCommEntrypointDependencies,
 } from "../runtime/agent-comm/entrypoints";
 import {
+  checkExpiringArtifacts,
   listAgentContactSurfaceItems,
   listAgentInviteSurfaceItems,
 } from "../runtime/agent-comm/contact-surfaces";
@@ -135,9 +137,54 @@ function parseOptionalAllowedValue<T extends string>(
   };
 }
 
-function createAgentCommStatusResponse(store: StateStore, runtime: AgentCommRuntimeHandle) {
+const legacyUsageThresholds = {
+  legacyOnlyContactsWatchAbove: 0,
+  legacyOnlyContactsDiscourageAbove: 3,
+  manualPeerRecordsDiscourageAbove: 1,
+  legacyFallbackMessagesDiscourageAbove: 5,
+} as const;
+
+function summarizeLegacyUsage(
+  contacts: ReturnType<typeof listAgentContactSurfaceItems>,
+  recentMessages: ReturnType<StateStore["listAgentMessages"]>,
+) {
+  const legacyOnlyContactCount = contacts.filter((contact) => contact.legacyProtocolOnly).length;
+  const manualPeerRecordCount = contacts.filter((contact) => contact.legacyManualPeerRecord).length;
+  const legacyFallbackMessageCount = recentMessages.filter(
+    (message) => message.trustOutcome === "legacy_fallback_v1",
+  ).length;
+  const unknownBusinessRejectCount = recentMessages.filter(
+    (message) => message.trustOutcome === "unknown_business_rejected",
+  ).length;
+
+  return {
+    legacyOnlyContactCount,
+    manualPeerRecordCount,
+    legacyFallbackMessageCount,
+    unknownBusinessRejectCount,
+    thresholds: legacyUsageThresholds,
+    shouldDiscourageNewLegacyOnboarding:
+      legacyOnlyContactCount > legacyUsageThresholds.legacyOnlyContactsDiscourageAbove
+      || manualPeerRecordCount >= legacyUsageThresholds.manualPeerRecordsDiscourageAbove
+      || legacyFallbackMessageCount >= legacyUsageThresholds.legacyFallbackMessagesDiscourageAbove,
+  };
+}
+
+function createAgentCommStatusResponse(
+  store: StateStore,
+  runtime: AgentCommRuntimeHandle,
+  config?: Pick<AlphaOsConfig, "commAutoAcceptInvites" | "commArtifactExpiryWarningDays">,
+) {
   const snapshot = runtime.getSnapshot();
   const contacts = listAgentContactSurfaceItems(store, 1000);
+  const trustedPeers = store.listAgentPeers(1000, "trusted");
+  const recentMessages = store.listAgentMessages(1000);
+  const paidPendingMessageCount = store.countAgentMessagesByStatus("paid_pending");
+  const autoAcceptInvites = config?.commAutoAcceptInvites ?? false;
+  const expiryWarnings = checkExpiringArtifacts(store, {
+    warningThresholdDays: config?.commArtifactExpiryWarningDays,
+  });
+  const legacyUsage = summarizeLegacyUsage(contacts, recentMessages);
   const contactStatusCounts = Object.fromEntries(
     agentContactStatuses.map((status) => [status, 0]),
   ) as Record<AgentContactStatus, number>;
@@ -152,15 +199,19 @@ function createAgentCommStatusResponse(store: StateStore, runtime: AgentCommRunt
 
   return {
     snapshot,
-    trustedPeerCount: store.listAgentPeers(1000, "trusted").length,
-    recentMessageCount: store.listAgentMessages(20).length,
+    autoAcceptInvites,
+    trustedPeerCount: trustedPeers.length,
+    recentMessageCount: recentMessages.length,
+    paidPendingMessageCount,
     contactCount: contacts.length,
+    expiryWarnings,
     contactStatusCounts,
     pendingInviteCounts: {
       inbound: pendingInboundInviteCount,
       outbound: pendingOutboundInviteCount,
       total: pendingInboundInviteCount + pendingOutboundInviteCount,
     },
+    legacyUsage,
   };
 }
 
@@ -1691,7 +1742,7 @@ export function createServer(
       return;
     }
 
-    res.json(createAgentCommStatusResponse(store, runtime));
+    res.json(createAgentCommStatusResponse(store, runtime, options?.config));
   });
 
   app.get("/api/v1/agent-comm/messages", (req, res) => {
@@ -1735,6 +1786,7 @@ export function createServer(
       contactId: contact?.contactId,
       legacyManualRecord: true,
       legacyMarkers: ["manual_peer_record"],
+      warnings: [LEGACY_MANUAL_PEER_TRUST_WARNING],
     });
   });
 

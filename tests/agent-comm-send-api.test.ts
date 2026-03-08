@@ -392,6 +392,7 @@ describe("agent-comm HTTP API", () => {
     } as Awaited<ReturnType<typeof importIdentityArtifactBundle>>);
     vi.mocked(exportIdentityArtifactBundle).mockResolvedValue({
       contactCardDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      shareUrl: "agentcomm://card?v=1&bundle=ZXhhbXBsZQ",
       bundle: {
         contactCard: {
           displayName: "Exported Agent",
@@ -629,6 +630,7 @@ describe("agent-comm HTTP API", () => {
       contactCardFingerprint: "0xaaaaaaaa...aaaaaaaa",
       transportBindingDigest: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       transportBindingFingerprint: "0xbbbbbbbb...bbbbbbbb",
+      shareUrl: "agentcomm://card?v=1&bundle=ZXhhbXBsZQ",
     });
 
     const response = await invokeApi(

@@ -114,6 +114,11 @@ function toInboxEventV2(input: {
   txHash?: string;
   timestamp?: string;
   command: unknown;
+  payment?: {
+    asset?: string;
+    amount?: string;
+    metadata?: Record<string, unknown>;
+  };
   inlineCard?: unknown;
   senderIdentityWallet?: string;
   senderTransportAddress?: string;
@@ -139,6 +144,7 @@ function toInboxEventV2(input: {
       schemaVersion: 2,
       payload: parsedCommand.payload,
     },
+    ...(input.payment ? { payment: input.payment } : {}),
     ...(input.inlineCard ? { attachments: { inlineCard: input.inlineCard } } : {}),
   };
   const ciphertext = encrypt(JSON.stringify(body), sharedKey);
@@ -487,6 +493,55 @@ describe("agent-comm inbox processor v2 groundwork", () => {
     });
     expect(events).toHaveLength(1);
     expect(events[0]?.eventStatus).toBe("pending");
+    expect(events[0]?.metadata).toEqual({
+      requestedProfile: "research-collab",
+      requestedCapabilities: ["ping", "start_discovery"],
+      note: "invite",
+      senderPeerId: "peer-b",
+      trustedSender: false,
+      envelopeVersion: 1,
+    });
+  });
+
+  it("auto-accepts unknown inbound connection_invite when configured", async () => {
+    const store = createStore("alphaos-inbox-");
+
+    const result = await processInbox(
+      {
+        wallet: localWallet,
+        store,
+        config: {
+          commAutoAcceptInvites: true,
+        },
+      },
+      toInboxEvent({
+        nonce: "nonce-auto-accept",
+        txHash: "0xtx-auto-accept",
+        command: {
+          type: "connection_invite",
+          payload: {
+            requestedProfile: "research-collab",
+            requestedCapabilities: ["ping", "start_discovery"],
+            note: "invite",
+          },
+        },
+      }),
+    );
+
+    expect(result.message.status).toBe("received");
+    expect(result.message.trustOutcome).toBe("trusted");
+
+    const contact = store.getAgentContactByIdentityWallet(senderWallet.getAddress());
+    expect(contact).not.toBeNull();
+    expect(contact?.status).toBe("trusted");
+
+    const events = store.listAgentConnectionEvents(10, {
+      contactId: contact?.contactId,
+      direction: "inbound",
+      eventType: "connection_invite",
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventStatus).toBe("applied");
     expect(events[0]?.metadata).toEqual({
       requestedProfile: "research-collab",
       requestedCapabilities: ["ping", "start_discovery"],
@@ -878,6 +933,59 @@ describe("agent-comm inbox processor v2 groundwork", () => {
     );
   });
 
+  it("auto-accepts unknown inbound v2 invites when configured", async () => {
+    const store = createStore("alphaos-inbox-");
+    const inlineCard = await buildInlineCardBundle({
+      identityPrivateKey: SENDER_PRIVATE_KEY,
+      transportAddress: senderWallet.getAddress(),
+      transportPubkey: senderWallet.getPublicKey(),
+      nowUnixSeconds: 1772841600,
+    });
+
+    const result = await processInbox(
+      {
+        ...getLocalReceiveOptions(store),
+        config: {
+          commAutoAcceptInvites: true,
+        },
+      },
+      toInboxEventV2({
+        msgId: "12121212-1212-4121-8121-121212121212",
+        txHash: "0xtx-v2-auto-accept",
+        command: {
+          type: "connection_invite",
+          payload: {
+            requestedProfile: "research-collab",
+            requestedCapabilities: ["ping"],
+            note: "v2 invite",
+          },
+        },
+        inlineCard,
+      }),
+    );
+
+    expect(result.message.status).toBe("received");
+    expect(result.message.trustOutcome).toBe("trusted");
+
+    const importedContact = store.getAgentContactByIdentityWallet(senderWallet.getAddress());
+    expect(importedContact?.status).toBe("trusted");
+
+    const inviteEvents = store.listAgentConnectionEvents(10, {
+      contactId: importedContact?.contactId,
+      direction: "inbound",
+      eventType: "connection_invite",
+    });
+    expect(inviteEvents).toHaveLength(1);
+    expect(inviteEvents[0]?.eventStatus).toBe("applied");
+    expect(inviteEvents[0]?.metadata).toEqual(
+      expect.objectContaining({
+        inlineCardAttached: true,
+        envelopeVersion: 2,
+        recipientKeyId: "rk_local",
+      }),
+    );
+  });
+
   it("rejects unknown inbound v2 business commands by default", async () => {
     const store = createStore("alphaos-inbox-");
 
@@ -899,6 +1007,44 @@ describe("agent-comm inbox processor v2 groundwork", () => {
     expect(result.message.envelopeVersion).toBe(2);
     expect(result.message.trustOutcome).toBe("unknown_business_rejected");
     expect(result.message.decryptedCommandType).toBe("ping");
+  });
+
+  it("marks paid unknown inbound v2 business commands as paid_pending", async () => {
+    const store = createStore("alphaos-inbox-");
+
+    const result = await processInbox(
+      getLocalReceiveOptions(store),
+      toInboxEventV2({
+        msgId: "23232323-2323-4232-8232-232323232323",
+        txHash: "0xtx-v2-business-paid-pending",
+        command: {
+          type: "ping",
+          payload: {
+            echo: "hello",
+          },
+        },
+        payment: {
+          asset: "USDC",
+          amount: "1000000",
+          metadata: {
+            invoiceId: "inv-1",
+          },
+        },
+      }),
+    );
+
+    expect(result.message.status).toBe("paid_pending");
+    expect(result.message.envelopeVersion).toBe(2);
+    expect(result.message.trustOutcome).toBe("paid_pending");
+    expect(result.message.payment).toEqual({
+      asset: "USDC",
+      amount: "1000000",
+      metadata: {
+        invoiceId: "inv-1",
+      },
+    });
+    expect(result.message.error).toBeUndefined();
+    expect(store.getAgentMessage(result.message.id)?.payment).toEqual(result.message.payment);
   });
 
   it("rejects v2 envelopes when decrypted sender transport does not match tx.from", async () => {

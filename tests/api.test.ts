@@ -3,7 +3,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "../src/skills/alphaos/api/server";
 import { loadConfig } from "../src/skills/alphaos/runtime/config";
 import { OnchainOsClient } from "../src/skills/alphaos/runtime/onchainos-client";
@@ -14,6 +14,7 @@ const stores: StateStore[] = [];
 const originalEnv = { ...process.env };
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const store of stores.splice(0)) {
     store.close();
   }
@@ -566,6 +567,10 @@ describe("API server", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-api-"));
     const store = new StateStore(tempDir);
     stores.push(store);
+    const config = {
+      ...makeApiTestConfig(),
+      commAutoAcceptInvites: true,
+    };
 
     const engine = {
       getCurrentMode: () => "paper",
@@ -583,6 +588,39 @@ describe("API server", () => {
       description: "test",
       strategyIds: ["dex-arbitrage"],
     };
+
+    const contact = store.upsertAgentContact({
+      identityWallet: "0x8888888888888888888888888888888888888888",
+      legacyPeerId: "peer-contact",
+      status: "pending_inbound",
+      supportedProtocols: ["agent-comm/2"],
+      capabilities: ["ping"],
+    });
+    store.upsertAgentConnectionEvent({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      direction: "inbound",
+      eventType: "connection_invite",
+      eventStatus: "pending",
+      occurredAt: "2026-03-07T00:00:00.000Z",
+    });
+
+    const app = createServer(engine as never, store, manifest, {
+      config,
+      apiSecret: TEST_API_SECRET,
+      demoPublic: false,
+      agentCommRuntime: {
+        stop: () => undefined,
+        getSnapshot: () => ({
+          enabled: true,
+          chainId: 196,
+          listenerMode: "poll",
+          walletAlias: "agent-comm",
+          localAddress: "0x1111111111111111111111111111111111111111",
+          localPubkey: "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        }),
+      },
+    });
 
     store.upsertAgentPeer({
       peerId: "peer-existing",
@@ -602,36 +640,26 @@ describe("API server", () => {
       receivedAt: new Date().toISOString(),
       executedAt: new Date().toISOString(),
     });
-    const contact = store.upsertAgentContact({
-      identityWallet: "0x8888888888888888888888888888888888888888",
-      legacyPeerId: "peer-contact",
-      status: "pending_inbound",
-      supportedProtocols: ["agent-comm/2"],
-      capabilities: ["ping"],
-    });
-    store.upsertAgentConnectionEvent({
-      contactId: contact.contactId,
-      identityWallet: contact.identityWallet,
+    store.insertAgentMessage({
+      id: "msg-paid-pending",
       direction: "inbound",
-      eventType: "connection_invite",
-      eventStatus: "pending",
-      occurredAt: "2026-03-07T00:00:00.000Z",
-    });
-
-    const app = createServer(engine as never, store, manifest, {
-      apiSecret: TEST_API_SECRET,
-      demoPublic: false,
-      agentCommRuntime: {
-        stop: () => undefined,
-        getSnapshot: () => ({
-          enabled: true,
-          chainId: 196,
-          listenerMode: "poll",
-          walletAlias: "agent-comm",
-          localAddress: "0x1111111111111111111111111111111111111111",
-          localPubkey: "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        }),
+      peerId: "unknown:0x6666666666666666666666666666666666666666",
+      nonce: "nonce-paid-pending",
+      commandType: "ping",
+      envelopeVersion: 2,
+      identityWallet: "0x6666666666666666666666666666666666666666",
+      transportAddress: "0x6666666666666666666666666666666666666666",
+      trustOutcome: "paid_pending",
+      payment: {
+        asset: "USDC",
+        amount: "1000000",
+        metadata: {
+          invoiceId: "inv-api-1",
+        },
       },
+      ciphertext: "0xfeedbeef",
+      status: "paid_pending",
+      receivedAt: new Date().toISOString(),
     });
 
     const statusResp = await invokeApi(
@@ -643,7 +671,9 @@ describe("API server", () => {
     );
     expect(statusResp.status).toBe(200);
     expect((statusResp.body as { snapshot: { enabled: boolean } }).snapshot.enabled).toBe(true);
+    expect((statusResp.body as { autoAcceptInvites: boolean }).autoAcceptInvites).toBe(true);
     expect((statusResp.body as { trustedPeerCount: number }).trustedPeerCount).toBe(1);
+    expect((statusResp.body as { paidPendingMessageCount: number }).paidPendingMessageCount).toBe(1);
     expect((statusResp.body as { contactCount: number }).contactCount).toBe(1);
     expect(
       (statusResp.body as { contactStatusCounts: { pending_inbound: number } }).contactStatusCounts
@@ -652,6 +682,14 @@ describe("API server", () => {
     expect(
       (statusResp.body as { pendingInviteCounts: { total: number } }).pendingInviteCounts.total,
     ).toBe(1);
+    expect(
+      (statusResp.body as { legacyUsage: { manualPeerRecordCount: number } }).legacyUsage
+        .manualPeerRecordCount,
+    ).toBe(0);
+    expect(
+      (statusResp.body as { legacyUsage: { shouldDiscourageNewLegacyOnboarding: boolean } }).legacyUsage
+        .shouldDiscourageNewLegacyOnboarding,
+    ).toBe(false);
 
     const messagesResp = await invokeApi(
       app,
@@ -678,6 +716,9 @@ describe("API server", () => {
     expect(peersUpsert.status).toBe(200);
     expect((peersUpsert.body as { peerId: string }).peerId).toBe("peer-new");
     expect((peersUpsert.body as { status: string }).status).toBe("trusted");
+    expect((peersUpsert.body as { warnings: string[] }).warnings).toEqual([
+      "legacy/manual v1 fallback record created; prefer card import plus invite/accept for new contacts",
+    ]);
 
     const peersResp = await invokeApi(
       app,
@@ -688,6 +729,161 @@ describe("API server", () => {
     );
     expect(peersResp.status).toBe(200);
     expect((peersResp.body as { items: unknown[] }).items.length).toBeGreaterThanOrEqual(2);
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("returns expiry warnings for expiring local LIW/ACW artifacts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-10T00:00:00.000Z"));
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-api-"));
+    const store = new StateStore(tempDir);
+    stores.push(store);
+    const config = {
+      ...makeApiTestConfig(),
+      commArtifactExpiryWarningDays: 7,
+    };
+
+    const engine = {
+      getCurrentMode: () => "paper",
+      requestMode: (mode: "paper" | "live"): EngineModeResponse => ({
+        ok: true,
+        requestedMode: mode,
+        currentMode: mode,
+        reasons: [],
+      }),
+    };
+
+    const manifest: SkillManifest = {
+      id: "alphaos",
+      version: "0.2.0",
+      description: "test",
+      strategyIds: ["dex-arbitrage"],
+    };
+
+    const liwAddress = "0x1111111111111111111111111111111111111111";
+    const acwAddress = "0x2222222222222222222222222222222222222222";
+    const activeBindingDigest = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const nowUnixSeconds = Math.floor(Date.now() / 1000);
+
+    store.upsertAgentLocalIdentity({
+      role: "liw",
+      walletAlias: "agent-comm-liw",
+      walletAddress: liwAddress,
+      identityWallet: liwAddress,
+      chainId: 196,
+      mode: "standard",
+    });
+    store.upsertAgentLocalIdentity({
+      role: "acw",
+      walletAlias: "agent-comm",
+      walletAddress: acwAddress,
+      identityWallet: liwAddress,
+      chainId: 196,
+      mode: "standard",
+      activeBindingDigest,
+      transportKeyId: "acw-key-1",
+    });
+
+    store.upsertAgentSignedArtifact({
+      artifactType: "ContactCard",
+      digest: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      signer: liwAddress,
+      identityWallet: liwAddress,
+      chainId: 196,
+      issuedAt: nowUnixSeconds - 60,
+      expiresAt: nowUnixSeconds + 5 * 24 * 60 * 60,
+      payload: {
+        identityWallet: liwAddress,
+        transport: {
+          receiveAddress: acwAddress,
+          keyId: "acw-key-1",
+        },
+      },
+      proof: {},
+      verificationStatus: "verified",
+      source: "local_export",
+    });
+    store.upsertAgentSignedArtifact({
+      artifactType: "TransportBinding",
+      digest: activeBindingDigest,
+      signer: liwAddress,
+      identityWallet: liwAddress,
+      chainId: 196,
+      issuedAt: nowUnixSeconds - 60,
+      expiresAt: nowUnixSeconds + 2 * 24 * 60 * 60,
+      payload: {
+        identityWallet: liwAddress,
+        receiveAddress: acwAddress,
+        keyId: "acw-key-1",
+      },
+      proof: {},
+      verificationStatus: "verified",
+      source: "local_export",
+    });
+    store.upsertAgentSignedArtifact({
+      artifactType: "ContactCard",
+      digest: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      signer: liwAddress,
+      identityWallet: liwAddress,
+      chainId: 196,
+      issuedAt: nowUnixSeconds - 60,
+      expiresAt: nowUnixSeconds + 24 * 60 * 60,
+      payload: {
+        identityWallet: liwAddress,
+        transport: {
+          receiveAddress: "0x3333333333333333333333333333333333333333",
+          keyId: "old-key",
+        },
+      },
+      proof: {},
+      verificationStatus: "verified",
+      source: "local_import",
+    });
+
+    const app = createServer(engine as never, store, manifest, {
+      config,
+      apiSecret: TEST_API_SECRET,
+      demoPublic: false,
+      agentCommRuntime: {
+        stop: () => undefined,
+        getSnapshot: () => ({
+          enabled: true,
+          chainId: 196,
+          listenerMode: "poll",
+          walletAlias: "agent-comm",
+          localAddress: acwAddress,
+          localPubkey: "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        }),
+      },
+    });
+
+    const statusResp = await invokeApi(
+      app,
+      "GET",
+      "/api/v1/agent-comm/status",
+      undefined,
+      { headers: authHeaders() },
+    );
+
+    expect(statusResp.status).toBe(200);
+    expect(
+      (statusResp.body as {
+        expiryWarnings: Array<{ type: string; expiresAt: string; daysRemaining: number }>;
+      }).expiryWarnings,
+    ).toEqual([
+      {
+        type: "transport_binding",
+        expiresAt: "2026-03-12T00:00:00.000Z",
+        daysRemaining: 2,
+      },
+      {
+        type: "contact_card",
+        expiresAt: "2026-03-15T00:00:00.000Z",
+        daysRemaining: 5,
+      },
+    ]);
 
     fs.rmSync(tempDir, { recursive: true, force: true });
   });

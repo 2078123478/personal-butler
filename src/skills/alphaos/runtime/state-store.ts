@@ -32,6 +32,7 @@ import {
   agentMessageSchema,
   agentSignedArtifactSchema,
   agentTransportEndpointSchema,
+  encryptedEnvelopeV2PaymentSchema,
   agentPeerCapabilitySchema,
   agentPeerSchema,
   jsonObjectSchema,
@@ -59,6 +60,7 @@ import type {
   AgentSignedArtifactVerificationStatus,
   AgentTransportEndpoint,
   AgentTransportEndpointStatus,
+  EncryptedEnvelopeV2Payment,
   ListenerCursor,
 } from "./agent-comm/types";
 import { utcDay } from "./time";
@@ -105,6 +107,7 @@ interface AgentMessageRow {
   identityWallet: string | null;
   transportAddress: string | null;
   trustOutcome: string | null;
+  paymentJson: string | null;
   decryptedCommandType: AgentCommandType | null;
   ciphertext: string;
   status: AgentMessageStatus;
@@ -275,6 +278,7 @@ const agentMessageSelectSql = `SELECT id,
                                       identity_wallet AS identityWallet,
                                       transport_address AS transportAddress,
                                       trust_outcome AS trustOutcome,
+                                      payment_json AS paymentJson,
                                       decrypted_command_type AS decryptedCommandType,
                                       ciphertext,
                                       status,
@@ -633,6 +637,7 @@ export class StateStore {
         identity_wallet TEXT,
         transport_address TEXT,
         trust_outcome TEXT,
+        payment_json TEXT,
         decrypted_command_type TEXT,
         ciphertext TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -849,6 +854,7 @@ export class StateStore {
     this.ensureColumn(this.alphaDb, "agent_messages", "identity_wallet", "TEXT");
     this.ensureColumn(this.alphaDb, "agent_messages", "transport_address", "TEXT");
     this.ensureColumn(this.alphaDb, "agent_messages", "trust_outcome", "TEXT");
+    this.ensureColumn(this.alphaDb, "agent_messages", "payment_json", "TEXT");
     this.ensureColumn(this.alphaDb, "agent_messages", "decrypted_command_type", "TEXT");
     this.alphaDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_agent_messages_identity_wallet_updated_at
@@ -1026,6 +1032,15 @@ export class StateStore {
       identityWallet: row.identityWallet ?? undefined,
       transportAddress: row.transportAddress ?? undefined,
       trustOutcome: row.trustOutcome ?? undefined,
+      payment: row.paymentJson
+        ? this.parseAgentCommJsonField(
+            encryptedEnvelopeV2PaymentSchema,
+            "agent message",
+            "paymentJson",
+            primaryKey,
+            row.paymentJson,
+          )
+        : undefined,
       decryptedCommandType: row.decryptedCommandType ?? undefined,
       ciphertext: row.ciphertext,
       status: row.status,
@@ -1561,6 +1576,7 @@ export class StateStore {
     identityWallet?: string;
     transportAddress?: string;
     trustOutcome?: string;
+    payment?: EncryptedEnvelopeV2Payment;
     decryptedCommandType?: AgentCommandType;
     ciphertext: string;
     status?: AgentMessageStatus;
@@ -1575,9 +1591,10 @@ export class StateStore {
       this.alphaDb,
       `INSERT INTO agent_messages (
         id, direction, peer_id, tx_hash, nonce, command_type, envelope_version, msg_id,
-        contact_id, identity_wallet, transport_address, trust_outcome, decrypted_command_type,
-        ciphertext, status, sent_at, received_at, executed_at, error, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        contact_id, identity_wallet, transport_address, trust_outcome, payment_json,
+        decrypted_command_type, ciphertext, status, sent_at, received_at, executed_at, error,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       input.direction,
       input.peerId,
@@ -1590,6 +1607,7 @@ export class StateStore {
       input.identityWallet ?? null,
       input.transportAddress ?? null,
       input.trustOutcome ?? null,
+      input.payment ? JSON.stringify(input.payment) : null,
       input.decryptedCommandType ?? null,
       input.ciphertext,
       input.status ?? "pending",
@@ -1685,6 +1703,13 @@ export class StateStore {
     return rows.map((row) => this.toAgentMessage(row));
   }
 
+  countAgentMessagesByStatus(status: AgentMessageStatus): number {
+    const row = this.alphaDb
+      .prepare("SELECT COUNT(*) AS count FROM agent_messages WHERE status = ?")
+      .get(status) as { count: number | null } | undefined;
+    return row?.count ?? 0;
+  }
+
   updateAgentMessageStatus(
     id: string,
     status: AgentMessageStatus,
@@ -1696,6 +1721,7 @@ export class StateStore {
       identityWallet?: string;
       transportAddress?: string;
       trustOutcome?: string;
+      payment?: EncryptedEnvelopeV2Payment;
       decryptedCommandType?: AgentCommandType;
       sentAt?: string;
       receivedAt?: string;
@@ -1715,6 +1741,7 @@ export class StateStore {
            identity_wallet = COALESCE(?, identity_wallet),
            transport_address = COALESCE(?, transport_address),
            trust_outcome = COALESCE(?, trust_outcome),
+           payment_json = COALESCE(?, payment_json),
            decrypted_command_type = COALESCE(?, decrypted_command_type),
            sent_at = COALESCE(?, sent_at),
            received_at = COALESCE(?, received_at),
@@ -1730,6 +1757,7 @@ export class StateStore {
       patch?.identityWallet ?? null,
       patch?.transportAddress ?? null,
       patch?.trustOutcome ?? null,
+      patch?.payment ? JSON.stringify(patch.payment) : null,
       patch?.decryptedCommandType ?? null,
       patch?.sentAt ?? null,
       patch?.receivedAt ?? null,

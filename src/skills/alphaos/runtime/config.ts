@@ -149,6 +149,8 @@ export interface AlphaOsConfig {
   discoveryMinSpreadBps: number;
   discoveryNotionalUsd: number;
   commEnabled: boolean;
+  commAutoAcceptInvites: boolean;
+  commArtifactExpiryWarningDays: number;
   commChainId: number;
   commRpcUrl?: string;
   commListenerMode: z.infer<typeof commListenerModeSchema>;
@@ -161,6 +163,8 @@ export interface AlphaOsConfig {
 type AgentCommConfig = Pick<
   AlphaOsConfig,
   | "commEnabled"
+  | "commAutoAcceptInvites"
+  | "commArtifactExpiryWarningDays"
   | "commChainId"
   | "commRpcUrl"
   | "commListenerMode"
@@ -242,6 +246,8 @@ export const alphaOsConfigSchema: z.ZodType<AlphaOsConfig> = z
     discoveryMinSpreadBps: z.number().finite(),
     discoveryNotionalUsd: z.number().finite(),
     commEnabled: z.boolean(),
+    commAutoAcceptInvites: z.boolean(),
+    commArtifactExpiryWarningDays: z.number().int().nonnegative(),
     commChainId: z.number().int().positive(),
     commRpcUrl: z.string().optional(),
     commListenerMode: commListenerModeSchema,
@@ -265,6 +271,11 @@ function readAgentCommConfig(options: {
 
   return {
     commEnabled: readBoolean("COMM_ENABLED", false),
+    commAutoAcceptInvites: readBoolean("COMM_AUTO_ACCEPT_INVITES", false),
+    commArtifactExpiryWarningDays: Math.max(
+      0,
+      Math.floor(readNumber("COMM_ARTIFACT_EXPIRY_WARNING_DAYS", 7)),
+    ),
     commChainId: readNumber("COMM_CHAIN_ID", commChainIdFallback),
     commRpcUrl: process.env.COMM_RPC_URL ?? options.commRpcUrlDefault,
     commListenerMode: readCommListenerMode(

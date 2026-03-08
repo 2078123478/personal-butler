@@ -14,6 +14,7 @@ import {
   importIdentityArtifactBundleFromJson,
   initCommWallet,
   initTemporaryDemoWallet,
+  LEGACY_MANUAL_PEER_TRUST_WARNING,
   listLocalIdentityProfiles,
   registerTrustedPeerEntry,
   rotateCommWallet,
@@ -23,6 +24,7 @@ import {
   sendCommPing,
   sendCommStartDiscovery,
 } from "./skills/alphaos/runtime/agent-comm/entrypoints";
+import { tryDecodeIdentityArtifactBundleShareUrl } from "./skills/alphaos/runtime/agent-comm/card-packaging";
 import { listAgentContactSurfaceItems } from "./skills/alphaos/runtime/agent-comm/contact-surfaces";
 import { startAgentCommRuntime } from "./skills/alphaos/runtime/agent-comm/runtime";
 import { agentCommandTypes, type AgentPeerCapability } from "./skills/alphaos/runtime/agent-comm/types";
@@ -139,6 +141,34 @@ function parseJsonObject(raw: string | undefined, label: string): Record<string,
   return parsed as Record<string, unknown>;
 }
 
+function readIdentityArtifactBundleInput(input: string): {
+  raw: string;
+  inputPath?: string;
+  source: string;
+} {
+  const sharePayload = tryDecodeIdentityArtifactBundleShareUrl(input);
+  if (sharePayload) {
+    return {
+      raw: sharePayload.rawJson,
+      source: `share-url:${sharePayload.shareUrl}`,
+    };
+  }
+
+  if (fs.existsSync(input)) {
+    const resolvedPath = path.resolve(input);
+    return {
+      raw: fs.readFileSync(resolvedPath, "utf8"),
+      inputPath: resolvedPath,
+      source: `file:${resolvedPath}`,
+    };
+  }
+
+  return {
+    raw: input,
+    source: "inline-json",
+  };
+}
+
 function writeJson(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
@@ -153,17 +183,18 @@ export function getAgentCommHelpText(): string {
     "  agent-comm:wallet:rotate",
     "  agent-comm:identity",
     "  agent-comm:card:export [--display-name <name>] [--output <file>]",
-    "  agent-comm:card:import <file>",
+    "  agent-comm:card:import <file|raw-json|share-url>",
     "  agent-comm:contacts:list",
     "  agent-comm:connect:invite <contactRef> [--attach-inline-card]",
     "  agent-comm:connect:accept <contactRef> [--attach-inline-card]",
     "  agent-comm:connect:reject <contactRef>",
     "  agent-comm:peer:trust    (legacy/manual v1 fallback)",
-    "  agent-comm:send <ping|start_discovery> <peerId>",
+    "  agent-comm:send <ping|start_discovery> <peerId|contact:contactId>",
     "",
     "Notes:",
     "  Preferred flow: add contact via card import, then connect via invite/accept.",
-    "  contactRef currently accepts contactId only.",
+    "  Business send accepts a trusted peerId or contact:<contactId>.",
+    "  Card export emits a shareUrl that can be copied into a QR code or short link wrapper.",
     "Canonical typed-data contracts:",
     "  docs/AGENT_COMM_V2_ARTIFACT_CONTRACTS.md",
   ].join("\n");
@@ -383,13 +414,12 @@ export async function run(): Promise<void> {
 
   if (command === "agent-comm:card:import") {
     const parsed = parseCliArgs(argv.slice(1));
-    const [inputPath] = parsed.positionals;
-    if (!inputPath) {
-      throw new Error("Usage: tsx src/index.ts agent-comm:card:import <file>");
+    const [inputSource] = parsed.positionals;
+    if (!inputSource) {
+      throw new Error("Usage: tsx src/index.ts agent-comm:card:import <file|raw-json|share-url>");
     }
 
-    const resolvedPath = path.resolve(inputPath);
-    const raw = fs.readFileSync(resolvedPath, "utf8");
+    const payload = readIdentityArtifactBundleInput(inputSource);
     const store = new StateStore(config.dataDir);
     try {
       const result = await importIdentityArtifactBundleFromJson(
@@ -397,14 +427,15 @@ export async function run(): Promise<void> {
           config,
           store,
         },
-        raw,
+        payload.raw,
         {
-          source: `file:${resolvedPath}`,
+          source: payload.source,
         },
       );
       writeJson({
         action: "agent-comm:card:import",
-        inputPath: resolvedPath,
+        ...(payload.inputPath ? { inputPath: payload.inputPath } : {}),
+        inputSource: payload.source,
         ...result,
       });
     } finally {
@@ -574,6 +605,7 @@ export async function run(): Promise<void> {
         legacyManualRecord: true,
         legacyMarkers: ["manual_peer_record"],
         contactId: store.getAgentContactByLegacyPeerId(peer.peerId)?.contactId,
+        warnings: [LEGACY_MANUAL_PEER_TRUST_WARNING],
       });
     } finally {
       store.close();
@@ -586,7 +618,7 @@ export async function run(): Promise<void> {
     const [commandType, peerId] = parsed.positionals;
     if (!commandType || !peerId) {
       throw new Error(
-        "Usage: tsx src/index.ts agent-comm:send <ping|start_discovery> <peerId> [--sender-peer-id <peerId>] [ping flags] [start_discovery flags]",
+        "Usage: tsx src/index.ts agent-comm:send <ping|start_discovery> <peerId|contact:contactId> [--sender-peer-id <peerId>] [ping flags] [start_discovery flags]",
       );
     }
 

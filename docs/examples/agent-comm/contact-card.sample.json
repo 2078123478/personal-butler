@@ -1,0 +1,44 @@
+{
+  "bundleVersion": 1,
+  "exportedAt": 1772841600,
+  "contactCard": {
+    "cardVersion": 1,
+    "protocols": ["agent-comm/2", "agent-comm/1"],
+    "displayName": "Sample Agent",
+    "handle": "@sample-agent",
+    "identityWallet": "0x1111111111111111111111111111111111111111",
+    "transport": {
+      "chainId": 196,
+      "receiveAddress": "0x2222222222222222222222222222222222222222",
+      "pubkey": "0x02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "keyId": "rk_sample_01"
+    },
+    "defaults": {
+      "capabilityProfile": "research-collab",
+      "capabilities": ["ping", "start_discovery"]
+    },
+    "issuedAt": 1772841600,
+    "expiresAt": 1788393600,
+    "legacyPeerId": "peer-sample",
+    "proof": {
+      "type": "eip712",
+      "signer": "0x1111111111111111111111111111111111111111",
+      "signature": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "transportBinding": {
+    "bindingVersion": 1,
+    "identityWallet": "0x1111111111111111111111111111111111111111",
+    "chainId": 196,
+    "receiveAddress": "0x2222222222222222222222222222222222222222",
+    "pubkey": "0x02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "keyId": "rk_sample_01",
+    "issuedAt": 1772841600,
+    "expiresAt": 1788393600,
+    "proof": {
+      "type": "eip712",
+      "signer": "0x1111111111111111111111111111111111111111",
+      "signature": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  }
+}

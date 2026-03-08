@@ -287,29 +287,44 @@ describe("StateStore P0 safety", () => {
       identityWallet: peer.walletAddress,
       transportAddress: peer.walletAddress,
       trustOutcome: "pending_outbound",
+      payment: {
+        asset: "USDC",
+        amount: "500000",
+        metadata: {
+          invoiceId: "inv-state-1",
+        },
+      },
       ciphertext: "0xdeadbeef",
       status: "pending",
     });
     expect(store.getAgentMessage(message.id)?.nonce).toBe("nonce-1");
     expect(store.getAgentMessage(message.id)?.trustOutcome).toBe("pending_outbound");
+    expect(store.getAgentMessage(message.id)?.payment).toEqual({
+      asset: "USDC",
+      amount: "500000",
+      metadata: {
+        invoiceId: "inv-state-1",
+      },
+    });
 
-    const updatedMessage = store.updateAgentMessageStatus(message.id, "sent", {
+    const updatedMessage = store.updateAgentMessageStatus(message.id, "paid_pending", {
       txHash: "0xtx1",
-      trustOutcome: "trusted",
+      trustOutcome: "paid_pending",
       sentAt: "2026-03-06T00:00:00.000Z",
     });
     expect(updatedMessage.txHash).toBe("0xtx1");
-    expect(updatedMessage.status).toBe("sent");
+    expect(updatedMessage.status).toBe("paid_pending");
     expect(updatedMessage.envelopeVersion).toBe(1);
     expect(updatedMessage.contactId).toBe("ct-1");
     expect(updatedMessage.identityWallet).toBe(peer.walletAddress);
     expect(updatedMessage.transportAddress).toBe(peer.walletAddress);
-    expect(updatedMessage.trustOutcome).toBe("trusted");
+    expect(updatedMessage.trustOutcome).toBe("paid_pending");
+    expect(store.countAgentMessagesByStatus("paid_pending")).toBe(1);
     expect(
       store.listAgentMessages(10, {
         peerId: peer.peerId,
         direction: "outbound",
-        status: "sent",
+        status: "paid_pending",
       }),
     ).toHaveLength(1);
 

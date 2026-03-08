@@ -6,10 +6,14 @@ import type {
   AgentConnectionEventStatus,
   AgentContact,
   AgentContactStatus,
+  AgentLocalIdentity,
   AgentMessageDirection,
   AgentSignedArtifact,
   AgentTransportEndpoint,
 } from "./types";
+
+const millisecondsPerDay = 24 * 60 * 60 * 1000;
+export const defaultArtifactExpiryWarningDays = 7;
 
 export interface AgentPendingInviteCounts {
   inbound: number;
@@ -54,6 +58,12 @@ export interface AgentInviteSurfaceItem extends AgentConnectionEvent {
   legacyMarkers?: string[];
   legacyProtocolOnly?: boolean;
   legacyManualPeerRecord?: boolean;
+}
+
+export interface AgentArtifactExpiryWarning {
+  type: "contact_card" | "transport_binding";
+  expiresAt: string;
+  daysRemaining: number;
 }
 
 function readMetadataString(
@@ -109,6 +119,185 @@ function getIdentityProofArtifact(
   }
 
   return verifiedArtifacts.find((artifact) => artifact.artifactType === "TransportBinding");
+}
+
+function findCurrentLocalIdentityProfiles(store: StateStore): {
+  liwProfile?: AgentLocalIdentity;
+  acwProfile?: AgentLocalIdentity;
+} {
+  const localProfiles = store
+    .listAgentLocalIdentities(10)
+    .filter((profile) => profile.role === "liw" || profile.role === "acw");
+
+  return {
+    liwProfile: localProfiles.find((profile) => profile.role === "liw"),
+    acwProfile: localProfiles.find((profile) => profile.role === "acw"),
+  };
+}
+
+function listVerifiedLocalExportArtifacts(
+  store: StateStore,
+  identityWallet: string,
+): AgentSignedArtifact[] {
+  return store
+    .listAgentSignedArtifacts(100, { identityWallet })
+    .filter(
+      (artifact) =>
+        artifact.source === "local_export"
+        && artifact.verificationStatus === "verified"
+        && (artifact.artifactType === "ContactCard" || artifact.artifactType === "TransportBinding"),
+    );
+}
+
+function readPayloadString(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readContactCardTransportAddress(artifact: AgentSignedArtifact): string | undefined {
+  const transport = artifact.payload["transport"];
+  if (!transport || typeof transport !== "object" || Array.isArray(transport)) {
+    return undefined;
+  }
+  return readPayloadString(transport as Record<string, unknown>, "receiveAddress");
+}
+
+function readContactCardTransportKeyId(artifact: AgentSignedArtifact): string | undefined {
+  const transport = artifact.payload["transport"];
+  if (!transport || typeof transport !== "object" || Array.isArray(transport)) {
+    return undefined;
+  }
+  return readPayloadString(transport as Record<string, unknown>, "keyId");
+}
+
+function readTransportBindingAddress(artifact: AgentSignedArtifact): string | undefined {
+  return readPayloadString(artifact.payload, "receiveAddress");
+}
+
+function readTransportBindingKeyId(artifact: AgentSignedArtifact): string | undefined {
+  return readPayloadString(artifact.payload, "keyId");
+}
+
+function findCurrentLocalContactCard(
+  artifacts: AgentSignedArtifact[],
+  acwProfile?: AgentLocalIdentity,
+): AgentSignedArtifact | undefined {
+  const contactCards = artifacts.filter((artifact) => artifact.artifactType === "ContactCard");
+  if (!acwProfile) {
+    return contactCards[0];
+  }
+
+  const matchingContactCard = contactCards.find((artifact) => {
+    const receiveAddress = readContactCardTransportAddress(artifact);
+    const keyId = readContactCardTransportKeyId(artifact);
+    if (receiveAddress?.toLowerCase() !== acwProfile.walletAddress.toLowerCase()) {
+      return false;
+    }
+    if (acwProfile.transportKeyId && keyId && keyId !== acwProfile.transportKeyId) {
+      return false;
+    }
+    return true;
+  });
+
+  return matchingContactCard ?? contactCards[0];
+}
+
+function findCurrentLocalTransportBinding(
+  artifacts: AgentSignedArtifact[],
+  acwProfile?: AgentLocalIdentity,
+): AgentSignedArtifact | undefined {
+  const bindings = artifacts.filter((artifact) => artifact.artifactType === "TransportBinding");
+  if (!acwProfile) {
+    return bindings[0];
+  }
+
+  const activeBindingDigest = acwProfile.activeBindingDigest;
+  if (activeBindingDigest) {
+    const activeBinding = bindings.find(
+      (artifact) => artifact.digest.toLowerCase() === activeBindingDigest.toLowerCase(),
+    );
+    if (activeBinding) {
+      return activeBinding;
+    }
+  }
+
+  const matchingBinding = bindings.find((artifact) => {
+    const receiveAddress = readTransportBindingAddress(artifact);
+    const keyId = readTransportBindingKeyId(artifact);
+    if (receiveAddress?.toLowerCase() !== acwProfile.walletAddress.toLowerCase()) {
+      return false;
+    }
+    if (acwProfile.transportKeyId && keyId && keyId !== acwProfile.transportKeyId) {
+      return false;
+    }
+    return true;
+  });
+
+  return matchingBinding ?? bindings[0];
+}
+
+function toExpiryWarning(
+  artifact: AgentSignedArtifact | undefined,
+  type: AgentArtifactExpiryWarning["type"],
+  nowMs: number,
+  thresholdMs: number,
+): AgentArtifactExpiryWarning | undefined {
+  if (!artifact) {
+    return undefined;
+  }
+
+  const expiresAtMs = artifact.expiresAt * 1000;
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs || expiresAtMs > nowMs + thresholdMs) {
+    return undefined;
+  }
+
+  return {
+    type,
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    daysRemaining: Math.max(1, Math.ceil((expiresAtMs - nowMs) / millisecondsPerDay)),
+  };
+}
+
+export function checkExpiringArtifacts(
+  store: StateStore,
+  options: {
+    now?: Date;
+    warningThresholdDays?: number;
+  } = {},
+): AgentArtifactExpiryWarning[] {
+  const { liwProfile, acwProfile } = findCurrentLocalIdentityProfiles(store);
+  const localIdentityWallet = liwProfile?.identityWallet ?? acwProfile?.identityWallet;
+  if (!localIdentityWallet) {
+    return [];
+  }
+
+  const nowMs = (options.now ?? new Date()).getTime();
+  if (!Number.isFinite(nowMs)) {
+    return [];
+  }
+
+  const warningThresholdDays = Math.max(
+    0,
+    Math.floor(options.warningThresholdDays ?? defaultArtifactExpiryWarningDays),
+  );
+  const thresholdMs = warningThresholdDays * millisecondsPerDay;
+  const localArtifacts = listVerifiedLocalExportArtifacts(store, localIdentityWallet);
+  const expiryWarnings = [
+    toExpiryWarning(
+      findCurrentLocalContactCard(localArtifacts, acwProfile),
+      "contact_card",
+      nowMs,
+      thresholdMs,
+    ),
+    toExpiryWarning(
+      findCurrentLocalTransportBinding(localArtifacts, acwProfile),
+      "transport_binding",
+      nowMs,
+      thresholdMs,
+    ),
+  ].filter((warning): warning is AgentArtifactExpiryWarning => Boolean(warning));
+
+  return expiryWarnings.sort((left, right) => left.expiresAt.localeCompare(right.expiresAt));
 }
 
 function listPendingInviteEvents(

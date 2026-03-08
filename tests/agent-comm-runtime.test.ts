@@ -303,6 +303,78 @@ describe("agent-comm runtime bootstrap", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it("passes the auto-accept invite policy into inbox processing", async () => {
+    const { store } = createStore("alphaos-comm-runtime-");
+    process.env.VAULT_MASTER_PASSWORD = "pass123";
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+    });
+
+    const message = store.insertAgentMessage({
+      id: "inbound-policy",
+      direction: "inbound",
+      peerId: "peer-a",
+      nonce: "nonce-policy",
+      commandType: "ping",
+      ciphertext: "0xcipher",
+      status: "rejected",
+      receivedAt: new Date().toISOString(),
+      error: "rejected for test",
+    });
+
+    processInboxMock.mockResolvedValue({
+      message,
+      command: {
+        type: "ping",
+        payload: {},
+      },
+    });
+
+    const stop = vi.fn();
+    startListenerMock.mockImplementation((_opts, onTransaction) => {
+      void onTransaction({
+        txHash: "0xpolicy",
+        from: "0x1111111111111111111111111111111111111111",
+        to: "0x2222222222222222222222222222222222222222",
+        calldata: "0x1234",
+        blockNumber: 12n,
+        timestamp: new Date().toISOString(),
+      });
+      return stop;
+    });
+
+    const runtime = await startAgentCommRuntime({
+      config: createConfig({
+        commEnabled: true,
+        commAutoAcceptInvites: true,
+        commListenerMode: "poll",
+        commRpcUrl: "http://localhost:8545",
+        commChainId: 196,
+        commWalletAlias: "agent-comm",
+      }),
+      logger: createLoggerMock() as never,
+      store,
+      discovery: {} as never,
+      onchain: {} as never,
+      vault: {
+        getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
+      } as never,
+    });
+
+    await vi.waitFor(() => {
+      expect(processInboxMock).toHaveBeenCalledOnce();
+    });
+    expect(processInboxMock.mock.calls[0]?.[0]).toMatchObject({
+      config: {
+        commAutoAcceptInvites: true,
+      },
+    });
+
+    runtime.stop();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it("marks message executed when route succeeds", async () => {
     const { store } = createStore("alphaos-comm-runtime-");
     process.env.VAULT_MASTER_PASSWORD = "pass123";

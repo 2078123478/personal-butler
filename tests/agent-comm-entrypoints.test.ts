@@ -151,6 +151,7 @@ describe("agent-comm entrypoints", () => {
 
     expect(exported.contactCardDigest).toMatch(/^0x[0-9a-f]{64}$/);
     expect(exported.transportBindingDigest).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(exported.shareUrl).toMatch(/^agentcomm:\/\/card\?v=1&bundle=/);
     expect(exported.profiles.map((profile) => profile.role)).toEqual(expect.arrayContaining(["liw", "acw"]));
     expect(exported.bundle.contactCard.displayName).toBe("Local Operator");
 
@@ -411,6 +412,73 @@ describe("agent-comm entrypoints", () => {
       },
     });
     expect(deps.store.findAgentMessage("peer-b", "outbound", result.nonce)?.status).toBe("sent");
+  });
+
+  it("sends ping to a trusted contact reference without a legacy peer record", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    const peerWallet = restoreShadowWallet(
+      "0x2424242424242424242424242424242424242424242424242424242424242424",
+    );
+
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    });
+    const contact = deps.store.upsertAgentContact({
+      identityWallet: "0x9999999999999999999999999999999999999999",
+      status: "trusted",
+      supportedProtocols: ["agent-comm/2", "agent-comm/1"],
+      capabilities: ["ping"],
+    });
+    deps.store.upsertAgentTransportEndpoint({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      chainId: 196,
+      receiveAddress: peerWallet.getAddress(),
+      pubkey: peerWallet.getPublicKey(),
+      keyId: "rk_contact_only",
+      endpointStatus: "active",
+      source: "unit-test",
+    });
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+      getTransactionCount: vi.fn(async () => 17),
+    });
+    const sendTransaction = vi.fn(async (_request: { data: string }) => "0xtx-contact-ping");
+    createWalletClientMock.mockReturnValue({
+      sendTransaction,
+    });
+
+    const result = await sendCommPing(deps, {
+      masterPassword: "pass123",
+      peerId: `contact:${contact.contactId}`,
+      echo: "hello-contact",
+    });
+
+    const request = sendTransaction.mock.calls[0]?.[0] as { data: string; to: string };
+    const { envelope, command: plaintext, body } = decryptOutboundCommand(request.data, peerWallet.privateKey);
+
+    expect(envelope.version).toBe(2);
+    expect(request.to).toBe(peerWallet.getAddress());
+    expect(result.txHash).toBe("0xtx-contact-ping");
+    expect(result.peerId).toBe(`contact:${contact.contactId}`);
+    expect(result.contactId).toBe(contact.contactId);
+    expect(result.legacyFallbackUsed).toBe(false);
+    expect(body).toEqual(
+      expect.objectContaining({
+        sender: expect.objectContaining({
+          identityWallet: getCommIdentity(deps, { masterPassword: "pass123" }).identityWallet,
+        }),
+      }),
+    );
+    expect(plaintext).toEqual({
+      type: "ping",
+      schemaVersion: 2,
+      payload: {
+        echo: "hello-contact",
+      },
+    });
   });
 
   it("sends start_discovery with the requested payload", async () => {
