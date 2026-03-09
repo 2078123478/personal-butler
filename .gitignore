@@ -4,5 +4,6 @@ dist
 .env.*
 !.env.example
 data
+demo-output
 coverage
 .DS_Store
