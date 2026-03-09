@@ -12,12 +12,16 @@ vi.mock("../src/skills/alphaos/runtime/agent-comm/entrypoints", async () => {
   return {
     ...actual,
     exportIdentityArtifactBundle: vi.fn(),
+    importRevocationNotice: vi.fn(),
     importIdentityArtifactBundle: vi.fn(),
+    revokeIdentityArtifact: vi.fn(),
     rotateCommWallet: vi.fn(),
     sendCommConnectionAccept: vi.fn(),
     sendCommConnectionInvite: vi.fn(),
     sendCommConnectionReject: vi.fn(),
     sendCommPing: vi.fn(),
+    sendCommProbeOnchainOs: vi.fn(),
+    sendCommRequestModeChange: vi.fn(),
     sendCommStartDiscovery: vi.fn(),
   };
 });
@@ -25,12 +29,16 @@ vi.mock("../src/skills/alphaos/runtime/agent-comm/entrypoints", async () => {
 import { createServer } from "../src/skills/alphaos/api/server";
 import {
   exportIdentityArtifactBundle,
+  importRevocationNotice,
   importIdentityArtifactBundle,
+  revokeIdentityArtifact,
   rotateCommWallet,
   sendCommConnectionAccept,
   sendCommConnectionInvite,
   sendCommConnectionReject,
   sendCommPing,
+  sendCommProbeOnchainOs,
+  sendCommRequestModeChange,
   sendCommStartDiscovery,
   type AgentCommEntrypointDependencies,
 } from "../src/skills/alphaos/runtime/agent-comm/entrypoints";
@@ -194,6 +202,48 @@ describe("agent-comm HTTP API", () => {
 
     expect(response.status).toBe(401);
     expect(vi.mocked(sendCommPing)).not.toHaveBeenCalled();
+  });
+
+  it("validates probe_onchainos and request_mode_change send payloads", async () => {
+    const { app } = buildApp();
+
+    const invalidProbeResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/send/probe-onchainos",
+      {
+        peerId: "peer-b",
+        notionalUsd: 0,
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(invalidProbeResponse.status).toBe(400);
+    expect(invalidProbeResponse.body).toEqual({
+      error: "notionalUsd must be a positive number",
+    });
+    expect(vi.mocked(sendCommProbeOnchainOs)).not.toHaveBeenCalled();
+
+    const invalidModeResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/send/request-mode-change",
+      {
+        peerId: "peer-b",
+        requestedMode: "turbo",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(invalidModeResponse.status).toBe(400);
+    expect(invalidModeResponse.body).toEqual({
+      error: "requestedMode must be paper or live",
+    });
+    expect(vi.mocked(sendCommRequestModeChange)).not.toHaveBeenCalled();
   });
 
   it("lists contacts and pending invite records from the store", async () => {
@@ -378,6 +428,62 @@ describe("agent-comm HTTP API", () => {
     expect(vi.mocked(sendCommConnectionInvite)).not.toHaveBeenCalled();
   });
 
+  it("validates revocation route payloads", async () => {
+    const { app } = buildApp();
+
+    const missingDigest = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/artifacts/revoke",
+      {
+        artifactType: "ContactCard",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+    expect(missingDigest.status).toBe(400);
+    expect(missingDigest.body).toEqual({
+      error: "artifactDigest is required",
+    });
+
+    const badType = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/artifacts/revoke",
+      {
+        artifactDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        artifactType: "Unknown",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+    expect(badType.status).toBe(400);
+    expect(badType.body).toEqual({
+      error: "artifactType must be ContactCard or TransportBinding",
+    });
+
+    const missingNotice = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/artifacts/revocations/import",
+      {
+        source: "api-test",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+    expect(missingNotice.status).toBe(400);
+    expect(missingNotice.body).toEqual({
+      error: "notice is required",
+    });
+
+    expect(vi.mocked(revokeIdentityArtifact)).not.toHaveBeenCalled();
+    expect(vi.mocked(importRevocationNotice)).not.toHaveBeenCalled();
+  });
+
   it("forwards card and connection routes to the matching entrypoints", async () => {
     const { app, store, vault, config } = buildApp();
 
@@ -399,6 +505,34 @@ describe("agent-comm HTTP API", () => {
         },
       },
     } as Awaited<ReturnType<typeof exportIdentityArtifactBundle>>);
+    vi.mocked(revokeIdentityArtifact).mockResolvedValue({
+      ok: true,
+      reasons: [],
+      failureCodes: [],
+      artifactDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      artifactType: "ContactCard",
+      artifactStatus: "revoked",
+      noticeDigest: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      noticeFingerprint: "0xbbbbbbbb...bbbbbbbb",
+      affectedEndpointIds: [],
+      affectedContactIds: ["ct_route"],
+      identityWallet: "0x1111111111111111111111111111111111111111",
+      notice: {
+        noticeVersion: 1,
+      },
+    } as unknown as Awaited<ReturnType<typeof revokeIdentityArtifact>>);
+    vi.mocked(importRevocationNotice).mockResolvedValue({
+      ok: true,
+      reasons: [],
+      failureCodes: [],
+      artifactDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      artifactType: "ContactCard",
+      artifactStatus: "revoked",
+      noticeDigest: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      noticeFingerprint: "0xcccccccc...cccccccc",
+      affectedEndpointIds: [],
+      affectedContactIds: ["ct_route"],
+    } as Awaited<ReturnType<typeof importRevocationNotice>>);
     vi.mocked(sendCommConnectionInvite).mockResolvedValue({
       txHash: "0xinvite",
       contactId: "ct_route",
@@ -492,6 +626,73 @@ describe("agent-comm HTTP API", () => {
         capabilityProfile: "research-collab",
         capabilities: ["ping", "start_discovery"],
         expiresInDays: 30,
+      },
+    );
+
+    const revokeResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/artifacts/revoke",
+      {
+        artifactDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        artifactType: "ContactCard",
+        reason: "rotated",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+    expect(revokeResponse.status).toBe(200);
+    expect(revokeResponse.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        artifactStatus: "revoked",
+      }),
+    );
+    expect(vi.mocked(revokeIdentityArtifact)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+        vault,
+      },
+      {
+        artifactDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        artifactType: "ContactCard",
+        reason: "rotated",
+      },
+    );
+
+    const importRevocationResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/artifacts/revocations/import",
+      {
+        notice: {
+          noticeVersion: 1,
+        },
+        source: "api-test",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+    expect(importRevocationResponse.status).toBe(200);
+    expect(importRevocationResponse.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        artifactStatus: "revoked",
+      }),
+    );
+    expect(vi.mocked(importRevocationNotice)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+      },
+      {
+        notice: {
+          noticeVersion: 1,
+        },
+        source: "api-test",
       },
     );
 
@@ -667,7 +868,7 @@ describe("agent-comm HTTP API", () => {
     );
   });
 
-  it("forwards ping and start-discovery sends to the existing entrypoints", async () => {
+  it("forwards Agent-Comm send routes to the matching entrypoints", async () => {
     const { app, store, vault, config } = buildApp();
 
     vi.mocked(sendCommPing).mockResolvedValue({
@@ -690,6 +891,26 @@ describe("agent-comm HTTP API", () => {
       envelopeVersion: 1,
       legacyFallbackUsed: true,
     });
+    vi.mocked(sendCommProbeOnchainOs).mockResolvedValue({
+      address: "0x1111111111111111111111111111111111111111",
+      pubkey: "03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      chainId: 196,
+      walletAlias: "agent-comm",
+      defaultSenderPeerId: "agent-comm",
+      identityWallet: "0x1111111111111111111111111111111111111111",
+      transportAddress: "0x1111111111111111111111111111111111111111",
+      localIdentityMode: "temporary_dual_use",
+      supportedProtocols: ["agent-comm/2", "agent-comm/1"],
+      txHash: "0xprobe",
+      nonce: "probe-nonce",
+      sentAt: "2026-03-06T00:00:00.500Z",
+      peerId: "peer-b",
+      recipient: "0x9999999999999999999999999999999999999999",
+      senderPeerId: "agent-a",
+      commandType: "probe_onchainos",
+      envelopeVersion: 1,
+      legacyFallbackUsed: true,
+    });
     vi.mocked(sendCommStartDiscovery).mockResolvedValue({
       address: "0x1111111111111111111111111111111111111111",
       pubkey: "03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -707,6 +928,26 @@ describe("agent-comm HTTP API", () => {
       recipient: "0x9999999999999999999999999999999999999999",
       senderPeerId: "agent-a",
       commandType: "start_discovery",
+      envelopeVersion: 1,
+      legacyFallbackUsed: true,
+    });
+    vi.mocked(sendCommRequestModeChange).mockResolvedValue({
+      address: "0x1111111111111111111111111111111111111111",
+      pubkey: "03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      chainId: 196,
+      walletAlias: "agent-comm",
+      defaultSenderPeerId: "agent-comm",
+      identityWallet: "0x1111111111111111111111111111111111111111",
+      transportAddress: "0x1111111111111111111111111111111111111111",
+      localIdentityMode: "temporary_dual_use",
+      supportedProtocols: ["agent-comm/2", "agent-comm/1"],
+      txHash: "0xmode",
+      nonce: "mode-nonce",
+      sentAt: "2026-03-06T00:00:02.000Z",
+      peerId: "peer-b",
+      recipient: "0x9999999999999999999999999999999999999999",
+      senderPeerId: "agent-a",
+      commandType: "request_mode_change",
       envelopeVersion: 1,
       legacyFallbackUsed: true,
     });
@@ -740,6 +981,40 @@ describe("agent-comm HTTP API", () => {
         senderPeerId: "agent-a",
         echo: "hello",
         note: "smoke",
+      },
+    );
+
+    const probeResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/send/probe-onchainos",
+      {
+        peerId: "peer-b",
+        senderPeerId: "agent-a",
+        pair: "eth/usdc",
+        chainIndex: "196",
+        notionalUsd: 42.5,
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(probeResponse.status).toBe(200);
+    expect((probeResponse.body as { txHash: string }).txHash).toBe("0xprobe");
+    expect(vi.mocked(sendCommProbeOnchainOs)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sendCommProbeOnchainOs)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+        vault,
+      },
+      {
+        peerId: "peer-b",
+        senderPeerId: "agent-a",
+        pair: "ETH/USDC",
+        chainIndex: "196",
+        notionalUsd: 42.5,
       },
     );
 
@@ -778,6 +1053,38 @@ describe("agent-comm HTTP API", () => {
         durationMinutes: 30,
         sampleIntervalSec: 5,
         topN: 10,
+      },
+    );
+
+    const modeResponse = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/agent-comm/send/request-mode-change",
+      {
+        peerId: "peer-b",
+        senderPeerId: "agent-a",
+        requestedMode: "live",
+        reason: "operator requested",
+      },
+      {
+        authorization: `Bearer ${TEST_API_SECRET}`,
+      },
+    );
+
+    expect(modeResponse.status).toBe(200);
+    expect((modeResponse.body as { txHash: string }).txHash).toBe("0xmode");
+    expect(vi.mocked(sendCommRequestModeChange)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sendCommRequestModeChange)).toHaveBeenCalledWith(
+      {
+        config,
+        store,
+        vault,
+      },
+      {
+        peerId: "peer-b",
+        senderPeerId: "agent-a",
+        requestedMode: "live",
+        reason: "operator requested",
       },
     );
   });

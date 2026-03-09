@@ -11,7 +11,7 @@ import {
   type ProcessInboxResult,
 } from "./inbox-processor";
 import { resolveLocalIdentityState } from "./local-identity";
-import { routeCommand } from "./task-router";
+import { routeCommand, type TaskRouterEngine } from "./task-router";
 import { startListener, type TransactionEvent } from "./tx-listener";
 import type { CommListenerMode, ListenerCursor } from "./types";
 
@@ -48,6 +48,7 @@ export interface StartAgentCommRuntimeOptions {
   store: StateStore;
   discovery: DiscoveryEngine;
   onchain: OnchainOsClient;
+  engine: TaskRouterEngine;
   vault: VaultService;
 }
 
@@ -200,7 +201,7 @@ function shouldExecuteMessage(result: ProcessInboxResult): boolean {
 }
 
 async function executeInboundMessage(
-  options: Pick<StartAgentCommRuntimeOptions, "discovery" | "onchain" | "store">,
+  options: Pick<StartAgentCommRuntimeOptions, "discovery" | "engine" | "onchain" | "store">,
   result: ProcessInboxResult,
 ): Promise<void> {
   if (!shouldExecuteMessage(result)) {
@@ -210,6 +211,7 @@ async function executeInboundMessage(
   const routeResult = await routeCommand(
     {
       discovery: options.discovery,
+      engine: options.engine,
       onchain: options.onchain,
       store: options.store,
     },
@@ -230,12 +232,13 @@ async function executeInboundMessage(
 }
 
 function createTransactionHandler(
-  options: Pick<StartAgentCommRuntimeOptions, "config" | "discovery" | "onchain" | "store">,
+  options: Pick<StartAgentCommRuntimeOptions, "config" | "discovery" | "engine" | "onchain" | "store">,
   input: ReturnType<typeof resolveLocalIdentityState>,
   setRuntimeError: (code: string, message: string, details?: Record<string, unknown>) => void,
 ): (event: TransactionEvent) => Promise<void> {
   const inboxConfig = {
     commAutoAcceptInvites: options.config.commAutoAcceptInvites,
+    x402Mode: options.config.x402Mode,
   };
 
   return async (event: TransactionEvent): Promise<void> => {
@@ -363,6 +366,7 @@ export async function startAgentCommRuntime(
     {
       config,
       discovery: options.discovery,
+      engine: options.engine,
       onchain: options.onchain,
       store,
     },

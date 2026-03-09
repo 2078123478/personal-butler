@@ -36,6 +36,10 @@ const rotateCommWalletMock = vi.hoisted(() => vi.fn());
 const sendCommConnectionInviteMock = vi.hoisted(() => vi.fn());
 const sendCommConnectionAcceptMock = vi.hoisted(() => vi.fn());
 const sendCommConnectionRejectMock = vi.hoisted(() => vi.fn());
+const sendCommProbeOnchainOsMock = vi.hoisted(() => vi.fn());
+const sendCommRequestModeChangeMock = vi.hoisted(() => vi.fn());
+const revokeIdentityArtifactMock = vi.hoisted(() => vi.fn());
+const importRevocationNoticeFromJsonMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/skills/alphaos/runtime/config", () => ({
   loadConfig: loadConfigMock,
@@ -58,17 +62,21 @@ vi.mock("../src/skills/alphaos/runtime/agent-comm/entrypoints", () => ({
   exportIdentityArtifactBundle: vi.fn(),
   getCommIdentity: vi.fn(),
   importIdentityArtifactBundleFromJson: importIdentityArtifactBundleFromJsonMock,
+  importRevocationNoticeFromJson: importRevocationNoticeFromJsonMock,
   initCommWallet: vi.fn(),
   initTemporaryDemoWallet: vi.fn(),
   LEGACY_MANUAL_PEER_TRUST_WARNING:
     "legacy/manual v1 fallback record created; prefer card import plus invite/accept for new contacts",
   listLocalIdentityProfiles: vi.fn(),
   registerTrustedPeerEntry: registerTrustedPeerEntryMock,
+  revokeIdentityArtifact: revokeIdentityArtifactMock,
   rotateCommWallet: rotateCommWalletMock,
   sendCommConnectionAccept: sendCommConnectionAcceptMock,
   sendCommConnectionInvite: sendCommConnectionInviteMock,
   sendCommConnectionReject: sendCommConnectionRejectMock,
   sendCommPing: vi.fn(),
+  sendCommProbeOnchainOs: sendCommProbeOnchainOsMock,
+  sendCommRequestModeChange: sendCommRequestModeChangeMock,
   sendCommStartDiscovery: vi.fn(),
 }));
 
@@ -134,6 +142,38 @@ beforeEach(() => {
     txHash: "0xtx-reject",
     contactId: "ct_reject",
   });
+  sendCommProbeOnchainOsMock.mockResolvedValue({
+    txHash: "0xtx-probe",
+    peerId: "peer-probe",
+    commandType: "probe_onchainos",
+  });
+  sendCommRequestModeChangeMock.mockResolvedValue({
+    txHash: "0xtx-mode",
+    peerId: "peer-mode",
+    commandType: "request_mode_change",
+  });
+  revokeIdentityArtifactMock.mockResolvedValue({
+    ok: true,
+    reasons: [],
+    failureCodes: [],
+    artifactDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    artifactType: "ContactCard",
+    artifactStatus: "revoked",
+    noticeDigest: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    affectedEndpointIds: [],
+    affectedContactIds: ["ct_import"],
+  });
+  importRevocationNoticeFromJsonMock.mockResolvedValue({
+    ok: true,
+    reasons: [],
+    failureCodes: [],
+    artifactDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    artifactType: "ContactCard",
+    artifactStatus: "revoked",
+    noticeDigest: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    affectedEndpointIds: [],
+    affectedContactIds: ["ct_import"],
+  });
   importIdentityArtifactBundleFromJsonMock.mockResolvedValue({
     ok: true,
     reasons: [],
@@ -164,8 +204,11 @@ describe("agent-comm CLI contact/connect commands", () => {
     expect(output).toContain("agent-comm:connect:accept <contactRef>");
     expect(output).toContain("--attach-inline-card");
     expect(output).toContain("agent-comm:connect:reject <contactRef>");
+    expect(output).toContain("agent-comm:artifact:revoke <artifactDigest>");
+    expect(output).toContain("agent-comm:artifact:import-revocation <file|raw-json>");
     expect(output).toContain("agent-comm:peer:trust    (legacy/manual v1 fallback)");
     expect(output).toContain("agent-comm:wallet:rotate");
+    expect(output).toContain("agent-comm:send <ping|probe_onchainos|start_discovery|request_mode_change>");
     expect(output).toContain("Preferred flow: add contact via card import, then connect via invite/accept.");
     expect(output).toContain("Business send accepts a trusted peerId or contact:<contactId>.");
     expect(output).toContain("agent-comm:card:import <file|raw-json|share-url>");
@@ -198,6 +241,75 @@ describe("agent-comm CLI contact/connect commands", () => {
       failureCodes: [],
       contactId: "ct_import",
     });
+  });
+
+  it("forwards artifact revoke flags to the entrypoint", async () => {
+    const output = await runCli([
+      "agent-comm:artifact:revoke",
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--artifact-type",
+      "ContactCard",
+      "--reason",
+      "rotated",
+      "--revoked-at",
+      "1741349900",
+    ]);
+
+    expect(revokeIdentityArtifactMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          dataDir: "/tmp/agent-comm-cli",
+        }),
+        store: expect.any(Object),
+        vault: expect.any(Object),
+      }),
+      {
+        artifactDigest: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        artifactType: "ContactCard",
+        reason: "rotated",
+        revokedAt: 1741349900,
+        replacementDigest: undefined,
+        source: undefined,
+      },
+    );
+    expect(JSON.parse(output)).toEqual(
+      expect.objectContaining({
+        action: "agent-comm:artifact:revoke",
+        ok: true,
+        artifactStatus: "revoked",
+      }),
+    );
+  });
+
+  it("imports a revocation notice from raw json", async () => {
+    const raw = JSON.stringify({
+      noticeVersion: 1,
+      identityWallet: "0x1111111111111111111111111111111111111111",
+    });
+    const output = await runCli(["agent-comm:artifact:import-revocation", raw]);
+
+    expect(importRevocationNoticeFromJsonMock).toHaveBeenCalledWith(
+      {
+        config: expect.objectContaining({
+          dataDir: "/tmp/agent-comm-cli",
+        }),
+        store: expect.any(Object),
+      },
+      raw,
+      {
+        source: "inline-json",
+        expectedChainId: undefined,
+        nowUnixSeconds: undefined,
+      },
+    );
+    expect(JSON.parse(output)).toEqual(
+      expect.objectContaining({
+        action: "agent-comm:artifact:import-revocation",
+        inputSource: "inline-json",
+        ok: true,
+        artifactStatus: "revoked",
+      }),
+    );
   });
 
   it("lists contacts through the CLI", async () => {
@@ -351,6 +463,81 @@ describe("agent-comm CLI contact/connect commands", () => {
       action: "agent-comm:connect:reject",
       txHash: "0xtx-reject",
       contactId: "ct_reject",
+    });
+  });
+
+  it("forwards probe_onchainos send flags to the entrypoint", async () => {
+    const output = await runCli([
+      "agent-comm:send",
+      "probe_onchainos",
+      "peer-probe",
+      "--sender-peer-id",
+      "peer-local",
+      "--pair",
+      "eth/usdc",
+      "--chain-index",
+      "196",
+      "--notional-usd",
+      "42.5",
+    ]);
+
+    expect(sendCommProbeOnchainOsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          dataDir: "/tmp/agent-comm-cli",
+        }),
+        store: expect.any(Object),
+        vault: expect.any(Object),
+      }),
+      {
+        peerId: "peer-probe",
+        senderPeerId: "peer-local",
+        pair: "ETH/USDC",
+        chainIndex: "196",
+        notionalUsd: 42.5,
+      },
+    );
+    expect(JSON.parse(output)).toEqual({
+      action: "agent-comm:send",
+      txHash: "0xtx-probe",
+      peerId: "peer-probe",
+      commandType: "probe_onchainos",
+    });
+  });
+
+  it("forwards request_mode_change send flags to the entrypoint", async () => {
+    const output = await runCli([
+      "agent-comm:send",
+      "request_mode_change",
+      "peer-mode",
+      "--sender-peer-id",
+      "peer-local",
+      "--requested-mode",
+      "live",
+      "--reason",
+      "operator requested",
+    ]);
+
+    expect(sendCommRequestModeChangeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          dataDir: "/tmp/agent-comm-cli",
+        }),
+        store: expect.any(Object),
+        vault: expect.any(Object),
+      }),
+      {
+        peerId: "peer-mode",
+        senderPeerId: "peer-local",
+        requestedMode: "live",
+        reason: "operator requested",
+      },
+    );
+    expect(JSON.parse(output)).toEqual({
+      action: "agent-comm:send",
+      txHash: "0xtx-mode",
+      peerId: "peer-mode",
+      commandType: "request_mode_change",
     });
   });
 

@@ -89,6 +89,17 @@ describe("loadConfig security defaults", () => {
     expect(config.onchainUsePrivateSubmit).toBe(true);
   });
 
+  it("reads agent-comm relay submission configuration from env", () => {
+    process.env.COMM_RELAY_URL = "https://comm-relay.example/submit";
+    process.env.COMM_RELAY_TIMEOUT_MS = "12345";
+    process.env.COMM_SUBMIT_MODE = "relay";
+
+    const config = loadConfig();
+    expect(config.commRelayUrl).toBe("https://comm-relay.example/submit");
+    expect(config.commRelayTimeoutMs).toBe(12345);
+    expect(config.commSubmitMode).toBe("relay");
+  });
+
   it("reads cost-model parameters from env", () => {
     process.env.MEV_PENALTY_BPS = "7";
     process.env.LIQUIDITY_USD_DEFAULT = "900000";
@@ -115,6 +126,14 @@ describe("loadConfig security defaults", () => {
     expect(config.wsUrl).toBe("wss://quotes.example/ws");
     expect(config.wsReconnectMs).toBe(750);
     expect(config.quoteStaleMs).toBe(850);
+  });
+
+  it("supports X402_MODE observe and enforce", () => {
+    process.env.X402_MODE = "observe";
+    expect(loadConfig().x402Mode).toBe("observe");
+
+    process.env.X402_MODE = "enforce";
+    expect(loadConfig().x402Mode).toBe("enforce");
   });
 
   it("reads opportunity dedup configuration from env", () => {
@@ -180,5 +199,10 @@ describe("loadConfig security defaults", () => {
     process.env.COMM_LISTENER_MODE = "ws";
 
     expect(() => loadConfig()).toThrow("COMM_LISTENER_MODE=ws is not supported in agent-comm v0.1");
+  });
+
+  it("rejects unsupported X402_MODE values", () => {
+    process.env.X402_MODE = "strict";
+    expect(() => loadConfig()).toThrow();
   });
 });

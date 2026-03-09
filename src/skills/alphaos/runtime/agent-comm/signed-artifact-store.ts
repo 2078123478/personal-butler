@@ -1,6 +1,7 @@
 import type { StateStore } from "../state-store";
 import type {
   AgentCommSignedContactCardArtifact,
+  AgentCommSignedRevocationNoticeArtifact,
   AgentCommSignedTransportBindingArtifact,
 } from "./artifact-workflow";
 
@@ -68,6 +69,41 @@ export function persistSignedTransportBindingArtifact(
       keyId: artifact.keyId,
       issuedAt: artifact.issuedAt,
       expiresAt: artifact.expiresAt,
+    },
+    proof: artifact.proof as unknown as Record<string, unknown>,
+    verificationStatus: options.verificationStatus,
+    verificationError: options.verificationError,
+    source: options.source,
+  });
+}
+
+export function persistSignedRevocationNoticeArtifact(
+  store: StateStore,
+  artifact: AgentCommSignedRevocationNoticeArtifact,
+  options: {
+    digest: string;
+    source: string;
+    verificationStatus: "verified" | "invalid";
+    verificationError?: string;
+  },
+): void {
+  store.upsertAgentSignedArtifact({
+    artifactType: "RevocationNotice",
+    digest: options.digest,
+    signer: artifact.proof.signer,
+    identityWallet: artifact.identityWallet,
+    chainId: artifact.chainId,
+    issuedAt: artifact.revokedAt,
+    expiresAt: artifact.revokedAt,
+    payload: {
+      noticeVersion: artifact.noticeVersion,
+      identityWallet: artifact.identityWallet,
+      chainId: artifact.chainId,
+      artifactType: artifact.artifactType,
+      artifactDigest: artifact.artifactDigest,
+      replacementDigest: artifact.replacementDigest,
+      reason: artifact.reason,
+      revokedAt: artifact.revokedAt,
     },
     proof: artifact.proof as unknown as Record<string, unknown>,
     verificationStatus: options.verificationStatus,

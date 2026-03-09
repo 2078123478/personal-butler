@@ -3,18 +3,23 @@ import { getAddress, verifyTypedData, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   AGENT_COMM_CONTACT_CARD_VERSION,
+  AGENT_COMM_REVOCATION_NOTICE_VERSION,
   AGENT_COMM_TRANSPORT_BINDING_VERSION,
   computeContactCardDigest,
+  computeRevocationNoticeDigest,
   computeTransportBindingDigest,
   contactCardSchema,
   formatArtifactFingerprint,
   getContactCardTypedData,
+  getRevocationNoticeTypedData,
   getTransportBindingTypedData,
+  revocationNoticeSchema,
   transportBindingSchema,
   type AgentCommArtifactDomainOptions,
   type AgentCommContactCard,
   type AgentCommContactCardDefaults,
   type AgentCommContactCardInput,
+  type AgentCommRevocationNoticeInput,
   type AgentCommTransportBinding,
   type AgentCommTransportBindingInput,
 } from "./artifact-contracts";
@@ -65,6 +70,12 @@ export const signedContactCardArtifactSchema = contactCardSchema
   .strict();
 
 export const signedTransportBindingArtifactSchema = transportBindingSchema
+  .extend({
+    proof: agentCommArtifactProofSchema,
+  })
+  .strict();
+
+export const signedRevocationNoticeArtifactSchema = revocationNoticeSchema
   .extend({
     proof: agentCommArtifactProofSchema,
   })
@@ -161,6 +172,21 @@ function toUnsignedTransportBinding(
   };
 }
 
+function toUnsignedRevocationNotice(
+  artifact: AgentCommSignedRevocationNoticeArtifact,
+): AgentCommRevocationNoticeInput {
+  return {
+    noticeVersion: artifact.noticeVersion,
+    identityWallet: artifact.identityWallet,
+    chainId: artifact.chainId,
+    artifactType: artifact.artifactType,
+    artifactDigest: artifact.artifactDigest,
+    replacementDigest: artifact.replacementDigest,
+    reason: artifact.reason,
+    revokedAt: artifact.revokedAt,
+  };
+}
+
 function collectTransportBindingConsistencyErrors(
   card: AgentCommContactCard,
   binding: AgentCommTransportBinding,
@@ -227,20 +253,31 @@ async function verifyTransportBindingSignature(
   }
 }
 
-function ensureContactCardSignerMatchesIdentity(artifact: AgentCommSignedContactCardArtifact): string[] {
-  if (artifact.proof.signer === artifact.identityWallet) {
-    return [];
+async function verifyRevocationNoticeSignature(
+  artifact: AgentCommSignedRevocationNoticeArtifact,
+): Promise<boolean> {
+  try {
+    const unsigned = toUnsignedRevocationNotice(artifact);
+    const typedData = getRevocationNoticeTypedData(unsigned, toDomainOptions(artifact.proof));
+    return await verifyTypedData({
+      address: artifact.proof.signer,
+      ...typedData,
+      signature: artifact.proof.signature,
+    });
+  } catch {
+    return false;
   }
-  return ["bad signature: ContactCard proof signer must match identityWallet"]; 
 }
 
-function ensureTransportBindingSignerMatchesIdentity(
-  artifact: AgentCommSignedTransportBindingArtifact,
+function ensureArtifactSignerMatchesIdentity(
+  artifactType: "ContactCard" | "TransportBinding" | "RevocationNotice",
+  signer: Address,
+  identityWallet: Address,
 ): string[] {
-  if (artifact.proof.signer === artifact.identityWallet) {
+  if (signer === identityWallet) {
     return [];
   }
-  return ["bad signature: TransportBinding proof signer must match identityWallet"];
+  return [`bad signature: ${artifactType} proof signer must match identityWallet`];
 }
 
 function ensureExpectedChain(
@@ -316,6 +353,33 @@ export async function signTransportBindingArtifact(input: {
   });
 }
 
+export async function signRevocationNoticeArtifact(input: {
+  notice: AgentCommRevocationNoticeInput;
+  signerPrivateKey: string;
+  domain?: AgentCommArtifactDomainOptions;
+}): Promise<AgentCommSignedRevocationNoticeArtifact> {
+  const notice = revocationNoticeSchema.parse({
+    ...input.notice,
+    noticeVersion: input.notice.noticeVersion ?? AGENT_COMM_REVOCATION_NOTICE_VERSION,
+  });
+  const signerPrivateKey = assertPrivateKeyHex(input.signerPrivateKey);
+  const signer = privateKeyToAccount(signerPrivateKey);
+  if (getAddress(signer.address) !== notice.identityWallet) {
+    throw new Error("RevocationNotice signer must match identityWallet");
+  }
+
+  const signature = await signer.signTypedData(getRevocationNoticeTypedData(notice, input.domain));
+  return signedRevocationNoticeArtifactSchema.parse({
+    ...notice,
+    proof: {
+      type: "eip712",
+      signer: signer.address,
+      signature,
+      ...(input.domain?.salt ? { domain: { salt: input.domain.salt } } : {}),
+    },
+  });
+}
+
 export async function verifySignedContactCardArtifact(
   input: unknown,
   options: AgentCommArtifactVerificationOptions = {},
@@ -325,7 +389,7 @@ export async function verifySignedContactCardArtifact(
   const signatureVerified = await verifyContactCardSignature(artifact);
   const digest = computeContactCardDigest(toUnsignedContactCard(artifact), toDomainOptions(artifact.proof));
   const errors = uniqueErrors([
-    ...ensureContactCardSignerMatchesIdentity(artifact),
+    ...ensureArtifactSignerMatchesIdentity("ContactCard", artifact.proof.signer, artifact.identityWallet),
     ...ensureExpectedChain(artifact.transport.chainId, options.expectedChainId),
     ...ensureNotExpired(artifact.expiresAt, nowUnixSeconds),
     ...(signatureVerified ? [] : ["bad signature"]),
@@ -354,9 +418,36 @@ export async function verifySignedTransportBindingArtifact(
     toDomainOptions(artifact.proof),
   );
   const errors = uniqueErrors([
-    ...ensureTransportBindingSignerMatchesIdentity(artifact),
+    ...ensureArtifactSignerMatchesIdentity("TransportBinding", artifact.proof.signer, artifact.identityWallet),
     ...ensureExpectedChain(artifact.chainId, options.expectedChainId),
     ...ensureNotExpired(artifact.expiresAt, nowUnixSeconds),
+    ...(signatureVerified ? [] : ["bad signature"]),
+  ]);
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    artifact,
+    digest,
+    fingerprint: formatArtifactFingerprint(digest),
+    signatureVerified,
+    signer: artifact.proof.signer,
+  };
+}
+
+export async function verifyRevocationNoticeArtifact(
+  input: unknown,
+  options: AgentCommArtifactVerificationOptions = {},
+): Promise<AgentCommArtifactVerificationResult<AgentCommSignedRevocationNoticeArtifact>> {
+  const artifact = signedRevocationNoticeArtifactSchema.parse(input);
+  const signatureVerified = await verifyRevocationNoticeSignature(artifact);
+  const digest = computeRevocationNoticeDigest(
+    toUnsignedRevocationNotice(artifact),
+    toDomainOptions(artifact.proof),
+  );
+  const errors = uniqueErrors([
+    ...ensureArtifactSignerMatchesIdentity("RevocationNotice", artifact.proof.signer, artifact.identityWallet),
+    ...ensureExpectedChain(artifact.chainId, options.expectedChainId),
     ...(signatureVerified ? [] : ["bad signature"]),
   ]);
 
@@ -452,6 +543,18 @@ export function parseSignedIdentityArtifactBundle(rawJson: string): AgentCommSig
   return signedIdentityArtifactBundleSchema.parse(parsed);
 }
 
+export function parseSignedRevocationNoticeArtifact(rawJson: string): AgentCommSignedRevocationNoticeArtifact {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson) as unknown;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`invalid revocation notice JSON: ${reason}`);
+  }
+
+  return signedRevocationNoticeArtifactSchema.parse(parsed);
+}
+
 export function buildLocalIdentityArtifacts(input: {
   identityWallet: string;
   transportAddress: string;
@@ -513,4 +616,5 @@ export type AgentCommSignedContactCardArtifact = z.infer<typeof signedContactCar
 export type AgentCommSignedTransportBindingArtifact = z.infer<
   typeof signedTransportBindingArtifactSchema
 >;
+export type AgentCommSignedRevocationNoticeArtifact = z.infer<typeof signedRevocationNoticeArtifactSchema>;
 export type AgentCommSignedIdentityArtifactBundle = z.infer<typeof signedIdentityArtifactBundleSchema>;

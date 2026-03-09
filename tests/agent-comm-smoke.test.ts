@@ -57,6 +57,9 @@ interface SentTransaction {
 function createConfig(overrides: Partial<AlphaOsConfig>): AlphaOsConfig {
   delete process.env.COMM_ENABLED;
   delete process.env.COMM_RPC_URL;
+  delete process.env.COMM_RELAY_URL;
+  delete process.env.COMM_RELAY_TIMEOUT_MS;
+  delete process.env.COMM_SUBMIT_MODE;
   delete process.env.COMM_LISTENER_MODE;
 
   return {

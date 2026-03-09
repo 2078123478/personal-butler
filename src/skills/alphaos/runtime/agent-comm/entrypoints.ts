@@ -18,19 +18,33 @@ import {
 } from "./protocol-negotiation";
 import { registerPeer } from "./peer-registry";
 import { generateShadowWallet, restoreShadowWallet, type ShadowWallet } from "./shadow-wallet";
-import { sendCalldata, type SendResult } from "./tx-sender";
+import {
+  sendCalldata,
+  type OutboundMessageContext,
+  type SendResult,
+  type TxSenderOptions,
+} from "./tx-sender";
 import type {
   AgentCommSignedContactCardArtifact,
   AgentCommSignedIdentityArtifactBundle,
+  AgentCommSignedRevocationNoticeArtifact,
   AgentCommSignedTransportBindingArtifact,
 } from "./artifact-workflow";
 import {
   buildLocalIdentityArtifacts,
+  parseSignedRevocationNoticeArtifact,
   parseSignedIdentityArtifactBundle,
+  signRevocationNoticeArtifact,
   signIdentityArtifactBundle,
+  verifyRevocationNoticeArtifact,
   verifySignedIdentityArtifactBundle,
 } from "./artifact-workflow";
 import { buildIdentityArtifactBundleShareUrl } from "./card-packaging";
+import {
+  AGENT_COMM_EMPTY_ARTIFACT_DIGEST,
+  AGENT_COMM_REVOCATION_NOTICE_VERSION,
+  type RevocableAgentCommArtifactType,
+} from "./artifact-contracts";
 import {
   getPendingInviteEvent,
   normalizeOptionalStringList,
@@ -45,6 +59,7 @@ import {
   agentCommandSchema,
   encryptedEnvelopeV2BodySchema,
   type AgentCommand,
+  type AgentArtifactRevocationStatus,
   type AgentConnectionEvent,
   type AgentConnectionEventStatus,
   type AgentConnectionEventType,
@@ -59,10 +74,13 @@ import {
   type ConnectionInviteCommandPayload,
   type ConnectionRejectCommandPayload,
   type PingCommandPayload,
+  type ProbeOnchainOsCommandPayload,
+  type RequestModeChangeCommandPayload,
   type StartDiscoveryCommandPayload,
 } from "./types";
 import {
   persistSignedContactCardArtifact,
+  persistSignedRevocationNoticeArtifact,
   persistSignedTransportBindingArtifact,
 } from "./signed-artifact-store";
 
@@ -78,6 +96,12 @@ export const identityArtifactFailureCodes = [
   "expired_artifact",
   "domain_mismatch",
   "malformed_transport_binding",
+  "invalid_artifact",
+] as const;
+
+export const revocationArtifactFailureCodes = [
+  "bad_signature",
+  "domain_mismatch",
   "invalid_artifact",
 ] as const;
 
@@ -273,6 +297,41 @@ export interface ImportIdentityArtifactBundleResult {
   contactCardFingerprint?: string;
   transportBindingDigest?: string;
   transportBindingFingerprint?: string;
+}
+
+export interface RevokeIdentityArtifactOptions {
+  masterPassword?: string;
+  artifactDigest: string;
+  artifactType: RevocableAgentCommArtifactType;
+  replacementDigest?: string;
+  reason?: string;
+  revokedAt?: number;
+  source?: string;
+}
+
+export interface ImportRevocationNoticeInput {
+  notice: unknown;
+  source?: string;
+  expectedChainId?: number;
+  nowUnixSeconds?: number;
+}
+
+export interface ImportRevocationNoticeResult {
+  ok: boolean;
+  reasons: string[];
+  failureCodes: RevocationArtifactFailureCode[];
+  noticeDigest?: string;
+  noticeFingerprint?: string;
+  artifactDigest?: string;
+  artifactType?: RevocableAgentCommArtifactType;
+  artifactStatus?: AgentArtifactRevocationStatus;
+  affectedEndpointIds: string[];
+  affectedContactIds: string[];
+}
+
+export interface RevokeIdentityArtifactResult extends ImportRevocationNoticeResult {
+  notice: AgentCommSignedRevocationNoticeArtifact;
+  identityWallet: string;
 }
 
 export interface BootstrapAgentCommStateResult {
@@ -610,6 +669,30 @@ function classifyIdentityArtifactFailures(reasons: string[]): IdentityArtifactFa
   return [...new Set(codes)];
 }
 
+function classifyRevocationArtifactFailure(reason: string): RevocationArtifactFailureCode {
+  const normalized = reason.toLowerCase();
+  if (normalized.includes("domain mismatch")) {
+    return "domain_mismatch";
+  }
+  if (normalized.includes("bad signature")) {
+    return "bad_signature";
+  }
+  return "invalid_artifact";
+}
+
+function classifyRevocationArtifactFailures(reasons: string[]): RevocationArtifactFailureCode[] {
+  const codes = reasons.map((reason) => classifyRevocationArtifactFailure(reason));
+  return [...new Set(codes)];
+}
+
+function normalizeArtifactDigest(value: string, label: string): `0x${string}` {
+  const normalized = value.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`${label} must be a bytes32 hex string`);
+  }
+  return normalized as `0x${string}`;
+}
+
 function buildInlineCardDigestMetadata(
   attachment: OutboundInlineCardAttachment | undefined,
 ): Record<string, unknown> {
@@ -665,6 +748,7 @@ function materializeImportedContact(
   store: StateStore,
   input: {
     contactCard: AgentCommSignedContactCardArtifact;
+    contactCardDigest: string;
     transportBinding: AgentCommSignedTransportBindingArtifact;
     transportBindingDigest: string;
     source: string;
@@ -695,7 +779,10 @@ function materializeImportedContact(
       existingContact?.capabilities && existingContact.capabilities.length > 0
         ? existingContact.capabilities
         : normalizeOptionalStringList(input.contactCard.defaults.capabilities) ?? [],
-    metadata: existingContact?.metadata,
+    metadata: {
+      ...(existingContact?.metadata ?? {}),
+      contactCardDigest: input.contactCardDigest,
+    },
   });
 
   const endpoint = store.upsertAgentTransportEndpoint({
@@ -1041,6 +1128,7 @@ export async function importIdentityArtifactBundle(
   if (verification.ok && verification.contactCard && verification.transportBinding) {
     importedContact = materializeImportedContact(deps.store, {
       contactCard: verification.contactCard.artifact,
+      contactCardDigest: verification.contactCard.digest,
       transportBinding: verification.transportBinding.artifact,
       transportBindingDigest: verification.transportBinding.digest,
       source,
@@ -1091,7 +1179,310 @@ export async function importIdentityArtifactBundleFromJson(
   });
 }
 
+function toRevocationMetadata(input: {
+  noticeDigest: string;
+  artifactType: RevocableAgentCommArtifactType;
+  artifactDigest: string;
+  revokedAt: number;
+  reason?: string;
+  replacementDigest?: string;
+}): Record<string, unknown> {
+  return {
+    noticeDigest: input.noticeDigest,
+    artifactType: input.artifactType,
+    artifactDigest: input.artifactDigest,
+    revokedAt: input.revokedAt,
+    ...(input.reason ? { reason: input.reason } : {}),
+    ...(input.replacementDigest ? { replacementDigest: input.replacementDigest } : {}),
+  };
+}
+
+function applyRevocationNoticeState(
+  store: StateStore,
+  notice: AgentCommSignedRevocationNoticeArtifact,
+  noticeDigest: string,
+): {
+  artifactStatus: AgentArtifactRevocationStatus;
+  affectedEndpointIds: string[];
+  affectedContactIds: string[];
+} {
+  const replacementDigest =
+    notice.replacementDigest !== AGENT_COMM_EMPTY_ARTIFACT_DIGEST
+      ? notice.replacementDigest
+      : undefined;
+  store.upsertAgentArtifactStatus({
+    artifactDigest: notice.artifactDigest,
+    artifactType: notice.artifactType,
+    identityWallet: notice.identityWallet,
+    status: "revoked",
+    revokedByDigest: noticeDigest,
+    revokedAt: notice.revokedAt,
+    reason: normalizeOptionalText(notice.reason),
+    metadata: toRevocationMetadata({
+      noticeDigest,
+      artifactType: notice.artifactType,
+      artifactDigest: notice.artifactDigest,
+      revokedAt: notice.revokedAt,
+      reason: normalizeOptionalText(notice.reason),
+      replacementDigest,
+    }),
+  });
+
+  if (notice.artifactType === "TransportBinding") {
+    const candidateEndpoints = store.listAgentTransportEndpointsByBindingDigest(
+      notice.artifactDigest,
+    );
+    const affectedEndpointIds: string[] = [];
+    const candidateContactIds = new Set<string>();
+
+    for (const endpoint of candidateEndpoints) {
+      const updated = store.upsertAgentTransportEndpoint({
+        id: endpoint.id,
+        contactId: endpoint.contactId,
+        identityWallet: endpoint.identityWallet,
+        chainId: endpoint.chainId,
+        receiveAddress: endpoint.receiveAddress,
+        pubkey: endpoint.pubkey,
+        keyId: endpoint.keyId,
+        bindingDigest: endpoint.bindingDigest ?? undefined,
+        endpointStatus: "revoked",
+        source: "revocation_notice",
+        metadata: {
+          ...(endpoint.metadata ?? {}),
+          revocation: toRevocationMetadata({
+            noticeDigest,
+            artifactType: notice.artifactType,
+            artifactDigest: notice.artifactDigest,
+            revokedAt: notice.revokedAt,
+            reason: normalizeOptionalText(notice.reason),
+            replacementDigest,
+          }),
+        },
+      });
+      affectedEndpointIds.push(updated.id);
+      candidateContactIds.add(updated.contactId);
+    }
+
+    const affectedContactIds: string[] = [];
+    for (const contactId of candidateContactIds) {
+      const activeEndpointCount = store.listAgentTransportEndpoints(1, {
+        contactId,
+        endpointStatus: "active",
+      }).length;
+      if (activeEndpointCount > 0) {
+        continue;
+      }
+      const contact = store.getAgentContact(contactId);
+      if (!contact) {
+        continue;
+      }
+      const updated = store.upsertAgentContact({
+        contactId: contact.contactId,
+        identityWallet: contact.identityWallet,
+        legacyPeerId: contact.legacyPeerId,
+        status: "revoked",
+        metadata: {
+          ...(contact.metadata ?? {}),
+          revocation: toRevocationMetadata({
+            noticeDigest,
+            artifactType: notice.artifactType,
+            artifactDigest: notice.artifactDigest,
+            revokedAt: notice.revokedAt,
+            reason: normalizeOptionalText(notice.reason),
+            replacementDigest,
+          }),
+        },
+      });
+      affectedContactIds.push(updated.contactId);
+    }
+
+    return {
+      artifactStatus: "revoked",
+      affectedEndpointIds,
+      affectedContactIds,
+    };
+  }
+
+  const contact = store.getAgentContactByIdentityWallet(notice.identityWallet);
+  const affectedContactIds = contact ? [contact.contactId] : [];
+  for (const contactId of affectedContactIds) {
+    const contact = store.getAgentContact(contactId);
+    if (!contact) {
+      continue;
+    }
+    store.upsertAgentContact({
+      contactId: contact.contactId,
+      identityWallet: contact.identityWallet,
+      legacyPeerId: contact.legacyPeerId,
+      status: "revoked",
+      metadata: {
+        ...(contact.metadata ?? {}),
+        revocation: toRevocationMetadata({
+          noticeDigest,
+          artifactType: notice.artifactType,
+          artifactDigest: notice.artifactDigest,
+          revokedAt: notice.revokedAt,
+          reason: normalizeOptionalText(notice.reason),
+          replacementDigest,
+        }),
+      },
+    });
+  }
+
+  return {
+    artifactStatus: "revoked",
+    affectedEndpointIds: [],
+    affectedContactIds,
+  };
+}
+
+export async function importRevocationNotice(
+  deps: Pick<AgentCommEntrypointDependencies, "config" | "store">,
+  input: ImportRevocationNoticeInput,
+): Promise<ImportRevocationNoticeResult> {
+  let verification: Awaited<ReturnType<typeof verifyRevocationNoticeArtifact>>;
+  try {
+    verification = await verifyRevocationNoticeArtifact(input.notice, {
+      expectedChainId: input.expectedChainId ?? deps.config.commChainId,
+      nowUnixSeconds: input.nowUnixSeconds,
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      reasons: [reason],
+      failureCodes: ["invalid_artifact"],
+      affectedEndpointIds: [],
+      affectedContactIds: [],
+    };
+  }
+
+  const source = input.source ?? "local_import";
+  persistSignedRevocationNoticeArtifact(deps.store, verification.artifact, {
+    digest: verification.digest,
+    source,
+    verificationStatus: verification.ok ? "verified" : "invalid",
+    verificationError: verification.ok ? undefined : verification.errors.join("; "),
+  });
+
+  if (!verification.ok) {
+    return {
+      ok: false,
+      reasons: verification.errors,
+      failureCodes: classifyRevocationArtifactFailures(verification.errors),
+      noticeDigest: verification.digest,
+      noticeFingerprint: verification.fingerprint,
+      artifactDigest: verification.artifact.artifactDigest,
+      artifactType: verification.artifact.artifactType,
+      affectedEndpointIds: [],
+      affectedContactIds: [],
+    };
+  }
+
+  const applied = applyRevocationNoticeState(
+    deps.store,
+    verification.artifact,
+    verification.digest,
+  );
+
+  return {
+    ok: true,
+    reasons: [],
+    failureCodes: [],
+    noticeDigest: verification.digest,
+    noticeFingerprint: verification.fingerprint,
+    artifactDigest: verification.artifact.artifactDigest,
+    artifactType: verification.artifact.artifactType,
+    artifactStatus: applied.artifactStatus,
+    affectedEndpointIds: applied.affectedEndpointIds,
+    affectedContactIds: applied.affectedContactIds,
+  };
+}
+
+export async function revokeIdentityArtifact(
+  deps: AgentCommEntrypointDependencies,
+  options: RevokeIdentityArtifactOptions,
+): Promise<RevokeIdentityArtifactResult> {
+  const masterPassword = getRequiredMasterPassword(options.masterPassword);
+  const local = resolveLocalWallet(deps, masterPassword);
+  const revokedAt = options.revokedAt ?? Math.floor(Date.now() / 1000);
+  if (!Number.isInteger(revokedAt) || revokedAt < 0) {
+    throw new Error("revokedAt must be a non-negative integer");
+  }
+
+  const signedNotice = await signRevocationNoticeArtifact({
+    notice: {
+      noticeVersion: AGENT_COMM_REVOCATION_NOTICE_VERSION,
+      identityWallet: local.state.liwWallet.getAddress(),
+      chainId: deps.config.commChainId,
+      artifactType: options.artifactType,
+      artifactDigest: normalizeArtifactDigest(options.artifactDigest, "artifactDigest"),
+      replacementDigest: options.replacementDigest
+        ? normalizeArtifactDigest(options.replacementDigest, "replacementDigest")
+        : AGENT_COMM_EMPTY_ARTIFACT_DIGEST,
+      reason: normalizeOptionalText(options.reason) ?? "",
+      revokedAt,
+    },
+    signerPrivateKey: local.state.liwWallet.privateKey,
+  });
+
+  const imported = await importRevocationNotice(
+    {
+      config: deps.config,
+      store: deps.store,
+    },
+    {
+      notice: signedNotice,
+      source: options.source ?? "local_revoke",
+      expectedChainId: deps.config.commChainId,
+      nowUnixSeconds: revokedAt,
+    },
+  );
+
+  if (!imported.ok) {
+    throw new Error(`failed to import locally-signed revocation notice: ${imported.reasons.join("; ")}`);
+  }
+
+  return {
+    ...imported,
+    notice: signedNotice,
+    identityWallet: local.state.liwWallet.getAddress(),
+  };
+}
+
+export async function importRevocationNoticeFromJson(
+  deps: Pick<AgentCommEntrypointDependencies, "config" | "store">,
+  rawJson: string,
+  options: {
+    source?: string;
+    expectedChainId?: number;
+    nowUnixSeconds?: number;
+  } = {},
+): Promise<ImportRevocationNoticeResult> {
+  let notice: AgentCommSignedRevocationNoticeArtifact;
+  try {
+    notice = parseSignedRevocationNoticeArtifact(rawJson);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      reasons: [reason],
+      failureCodes: ["invalid_artifact"],
+      affectedEndpointIds: [],
+      affectedContactIds: [],
+    };
+  }
+
+  return importRevocationNotice(deps, {
+    notice,
+    source: options.source,
+    expectedChainId: options.expectedChainId,
+    nowUnixSeconds: options.nowUnixSeconds,
+  });
+}
+
 export type IdentityArtifactFailureCode = (typeof identityArtifactFailureCodes)[number];
+export type RevocationArtifactFailureCode = (typeof revocationArtifactFailureCodes)[number];
 
 function findLocalContactCardDigest(
   store: StateStore,
@@ -1191,6 +1582,23 @@ function resolveContactTargetForTrustedPeer(
   };
 }
 
+function buildTxSenderOptions(
+  deps: AgentCommEntrypointDependencies,
+  local: ResolvedLocalWallet,
+  outboundMessage: OutboundMessageContext,
+): TxSenderOptions {
+  return {
+    rpcUrl: getRequiredCommRpcUrl(deps.config),
+    chainId: deps.config.commChainId,
+    walletAlias: local.state.acwProfile.walletAlias,
+    relayUrl: deps.config.commRelayUrl,
+    relayTimeoutMs: deps.config.commRelayTimeoutMs,
+    submitMode: deps.config.commSubmitMode,
+    store: deps.store,
+    outboundMessage,
+  };
+}
+
 async function sendCommCommandV1ToRecipient(
   deps: AgentCommEntrypointDependencies,
   options: {
@@ -1224,24 +1632,19 @@ async function sendCommCommandV1ToRecipient(
     ciphertext,
     signature: local.identity.pubkey,
   });
+  const outboundMessage: OutboundMessageContext = {
+    peerId: options.recipient.peerId,
+    nonce,
+    commandType: command.type,
+    envelopeVersion: AGENT_COMM_LEGACY_ENVELOPE_VERSION,
+    contactId: options.contact?.contactId,
+    identityWallet: options.contact?.identityWallet,
+    transportAddress: options.recipient.walletAddress,
+    trustOutcome: options.legacyFallbackUsed ? "legacy_fallback_v1" : undefined,
+    decryptedCommandType: command.type,
+  };
   const result = await sendCalldata(
-    {
-      rpcUrl: getRequiredCommRpcUrl(deps.config),
-      chainId: deps.config.commChainId,
-      walletAlias: local.state.acwProfile.walletAlias,
-      store: deps.store,
-      outboundMessage: {
-        peerId: options.recipient.peerId,
-        nonce,
-        commandType: command.type,
-        envelopeVersion: AGENT_COMM_LEGACY_ENVELOPE_VERSION,
-        contactId: options.contact?.contactId,
-        identityWallet: options.contact?.identityWallet,
-        transportAddress: options.recipient.walletAddress,
-        trustOutcome: options.legacyFallbackUsed ? "legacy_fallback_v1" : undefined,
-        decryptedCommandType: command.type,
-      },
-    },
+    buildTxSenderOptions(deps, local, outboundMessage),
     local.state.acwWallet,
     options.recipient.walletAddress,
     calldata,
@@ -1313,25 +1716,20 @@ async function sendCommCommandV2ToContact(
     },
     ciphertext,
   });
+  const outboundMessage: OutboundMessageContext = {
+    messageId: msgId,
+    peerId: options.target.peerId,
+    nonce: msgId,
+    commandType: command.type,
+    envelopeVersion: AGENT_COMM_ENVELOPE_VERSION,
+    msgId,
+    contactId: options.target.contact.contactId,
+    identityWallet: options.target.contact.identityWallet,
+    transportAddress: options.target.endpoint.receiveAddress,
+    decryptedCommandType: command.type,
+  };
   const result = await sendCalldata(
-    {
-      rpcUrl: getRequiredCommRpcUrl(deps.config),
-      chainId: deps.config.commChainId,
-      walletAlias: local.state.acwProfile.walletAlias,
-      store: deps.store,
-      outboundMessage: {
-        messageId: msgId,
-        peerId: options.target.peerId,
-        nonce: msgId,
-        commandType: command.type,
-        envelopeVersion: AGENT_COMM_ENVELOPE_VERSION,
-        msgId,
-        contactId: options.target.contact.contactId,
-        identityWallet: options.target.contact.identityWallet,
-        transportAddress: options.target.endpoint.receiveAddress,
-        decryptedCommandType: command.type,
-      },
-    },
+    buildTxSenderOptions(deps, local, outboundMessage),
     local.state.acwWallet,
     options.target.endpoint.receiveAddress,
     calldata,
@@ -1450,6 +1848,56 @@ export async function sendCommStartDiscovery(
         ...(options.durationMinutes ? { durationMinutes: options.durationMinutes } : {}),
         ...(options.sampleIntervalSec ? { sampleIntervalSec: options.sampleIntervalSec } : {}),
         ...(options.topN ? { topN: options.topN } : {}),
+      },
+    },
+  });
+}
+
+export async function sendCommProbeOnchainOs(
+  deps: AgentCommEntrypointDependencies,
+  options: {
+    masterPassword?: string;
+    peerId: string;
+    senderPeerId?: string;
+    pair?: ProbeOnchainOsCommandPayload["pair"];
+    chainIndex?: ProbeOnchainOsCommandPayload["chainIndex"];
+    notionalUsd?: ProbeOnchainOsCommandPayload["notionalUsd"];
+  },
+): Promise<SendCommCommandResult> {
+  return sendCommCommand(deps, {
+    masterPassword: options.masterPassword,
+    peerId: options.peerId,
+    senderPeerId: options.senderPeerId,
+    command: {
+      type: "probe_onchainos",
+      payload: {
+        ...(options.pair ? { pair: options.pair } : {}),
+        ...(options.chainIndex ? { chainIndex: options.chainIndex } : {}),
+        ...(options.notionalUsd !== undefined ? { notionalUsd: options.notionalUsd } : {}),
+      },
+    },
+  });
+}
+
+export async function sendCommRequestModeChange(
+  deps: AgentCommEntrypointDependencies,
+  options: {
+    masterPassword?: string;
+    peerId: string;
+    senderPeerId?: string;
+    requestedMode: RequestModeChangeCommandPayload["requestedMode"];
+    reason?: RequestModeChangeCommandPayload["reason"];
+  },
+): Promise<SendCommCommandResult> {
+  return sendCommCommand(deps, {
+    masterPassword: options.masterPassword,
+    peerId: options.peerId,
+    senderPeerId: options.senderPeerId,
+    command: {
+      type: "request_mode_change",
+      payload: {
+        requestedMode: options.requestedMode,
+        ...(options.reason ? { reason: options.reason } : {}),
       },
     },
   });

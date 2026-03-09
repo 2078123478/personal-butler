@@ -34,6 +34,7 @@ function createStore(prefix: string): StateStore {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
   for (const entry of stores.splice(0)) {
     entry.store.close();
     fs.rmSync(entry.dir, { recursive: true, force: true });
@@ -101,6 +102,105 @@ describe("tx-sender outbound status persistence", () => {
     expect(stored?.txHash).toBe("0xtx-sent");
   });
 
+  it("does not call relay when direct transaction succeeds", async () => {
+    const store = createStore("alphaos-comm-sender-");
+    const wallet = restoreShadowWallet(
+      "0x1111111111111111111111111111111111111111111111111111111111111111",
+    );
+    const recipient = "0x4444444444444444444444444444444444444444";
+    const calldata = encodeEnvelope(buildEnvelope(wallet.getPublicKey(), recipient, "nonce-direct-first"));
+
+    const relayFetch = vi.fn(async () => new Response(JSON.stringify({ txHash: "0xtx-relay-unused" })));
+    vi.stubGlobal("fetch", relayFetch);
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+      getTransactionCount: vi.fn(async () => 11),
+    });
+    const sendTransaction = vi.fn(async () => "0xtx-direct-success");
+    const signTransaction = vi.fn(async () => "0xsigned-unused");
+    createWalletClientMock.mockReturnValue({
+      sendTransaction,
+      signTransaction,
+    });
+
+    const result = await sendCalldata(
+      {
+        rpcUrl: "http://localhost:8545",
+        chainId: 196,
+        walletAlias: "agent-comm",
+        relayUrl: "https://relay.example/submit",
+        store,
+        outboundMessage: {
+          peerId: "peer-a",
+          nonce: "nonce-direct-first",
+          commandType: "ping",
+        },
+      },
+      wallet,
+      recipient,
+      calldata,
+    );
+
+    expect(result.txHash).toBe("0xtx-direct-success");
+    expect(sendTransaction).toHaveBeenCalledTimes(1);
+    expect(signTransaction).not.toHaveBeenCalled();
+    expect(relayFetch).not.toHaveBeenCalled();
+  });
+
+  it("falls back to relay when direct transaction fails", async () => {
+    const store = createStore("alphaos-comm-sender-");
+    const wallet = restoreShadowWallet(
+      "0x1111111111111111111111111111111111111111111111111111111111111111",
+    );
+    const recipient = "0x5555555555555555555555555555555555555555";
+    const calldata = encodeEnvelope(buildEnvelope(wallet.getPublicKey(), recipient, "nonce-fallback-relay"));
+
+    const relayFetch = vi.fn(async () => new Response(JSON.stringify({ txHash: "0xtx-relay-success" })));
+    vi.stubGlobal("fetch", relayFetch);
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+      getTransactionCount: vi.fn(async () => 12),
+    });
+    const sendTransaction = vi.fn(async () => {
+      throw new Error("rpc send failed");
+    });
+    const signTransaction = vi.fn(async () => "0xsigned-relay-raw");
+    createWalletClientMock.mockReturnValue({
+      sendTransaction,
+      signTransaction,
+    });
+
+    const result = await sendCalldata(
+      {
+        rpcUrl: "http://localhost:8545",
+        chainId: 196,
+        walletAlias: "agent-comm",
+        relayUrl: "https://relay.example/submit",
+        relayTimeoutMs: 12000,
+        store,
+        outboundMessage: {
+          peerId: "peer-a",
+          nonce: "nonce-fallback-relay",
+          commandType: "ping",
+        },
+      },
+      wallet,
+      recipient,
+      calldata,
+    );
+
+    expect(result.txHash).toBe("0xtx-relay-success");
+    expect(sendTransaction).toHaveBeenCalledTimes(1);
+    expect(signTransaction).toHaveBeenCalledTimes(1);
+    expect(relayFetch).toHaveBeenCalledTimes(1);
+
+    const stored = store.findAgentMessage("peer-a", "outbound", "nonce-fallback-relay");
+    expect(stored?.status).toBe("sent");
+    expect(stored?.txHash).toBe("0xtx-relay-success");
+  });
+
   it("persists outbound message as failed with error when send throws", async () => {
     const store = createStore("alphaos-comm-sender-");
     const wallet = restoreShadowWallet(
@@ -124,19 +224,21 @@ describe("tx-sender outbound status persistence", () => {
         {
           rpcUrl: "http://localhost:8545",
           chainId: 196,
-        walletAlias: "agent-comm",
-        store,
-        outboundMessage: {
-          peerId: "peer-a",
-          nonce: "nonce-failed",
-          commandType: "ping",
+          walletAlias: "agent-comm",
+          store,
+          outboundMessage: {
+            peerId: "peer-a",
+            nonce: "nonce-failed",
+            commandType: "ping",
+          },
         },
-      },
         wallet,
         recipient,
         calldata,
       ),
-    ).rejects.toThrow("Failed to send calldata transaction on chain 196: rpc send failed");
+    ).rejects.toThrow(
+      "Failed to send calldata transaction on chain 196: Failed to submit transaction: direct: rpc send failed",
+    );
 
     const stored = store.findAgentMessage("peer-a", "outbound", "nonce-failed");
     expect(stored?.status).toBe("failed");

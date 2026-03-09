@@ -12,16 +12,20 @@ import {
   exportIdentityArtifactBundle,
   getCommIdentity,
   importIdentityArtifactBundleFromJson,
+  importRevocationNoticeFromJson,
   initCommWallet,
   initTemporaryDemoWallet,
   LEGACY_MANUAL_PEER_TRUST_WARNING,
   listLocalIdentityProfiles,
   registerTrustedPeerEntry,
+  revokeIdentityArtifact,
   rotateCommWallet,
   sendCommConnectionAccept,
   sendCommConnectionInvite,
   sendCommConnectionReject,
   sendCommPing,
+  sendCommProbeOnchainOs,
+  sendCommRequestModeChange,
   sendCommStartDiscovery,
 } from "./skills/alphaos/runtime/agent-comm/entrypoints";
 import { tryDecodeIdentityArtifactBundleShareUrl } from "./skills/alphaos/runtime/agent-comm/card-packaging";
@@ -93,6 +97,28 @@ function parsePositiveIntegerFlag(raw: string | undefined, label: string): numbe
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${label} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeIntegerFlag(raw: string | undefined, label: string): number | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parsePositiveNumberFlag(raw: string | undefined, label: string): number | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive number`);
   }
   return parsed;
 }
@@ -169,8 +195,39 @@ function readIdentityArtifactBundleInput(input: string): {
   };
 }
 
+function readJsonInput(input: string): {
+  raw: string;
+  inputPath?: string;
+  source: string;
+} {
+  if (fs.existsSync(input)) {
+    const resolvedPath = path.resolve(input);
+    return {
+      raw: fs.readFileSync(resolvedPath, "utf8"),
+      inputPath: resolvedPath,
+      source: `file:${resolvedPath}`,
+    };
+  }
+
+  return {
+    raw: input,
+    source: "inline-json",
+  };
+}
+
+function parseRevocableArtifactType(value: string | undefined): "ContactCard" | "TransportBinding" {
+  if (value === "ContactCard" || value === "TransportBinding") {
+    return value;
+  }
+  throw new Error("--artifact-type must be ContactCard|TransportBinding");
+}
+
 function writeJson(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function isExecutionMode(value: string | undefined): value is "paper" | "live" {
+  return value === "paper" || value === "live";
 }
 
 export function getAgentCommHelpText(): string {
@@ -184,12 +241,14 @@ export function getAgentCommHelpText(): string {
     "  agent-comm:identity",
     "  agent-comm:card:export [--display-name <name>] [--output <file>]",
     "  agent-comm:card:import <file|raw-json|share-url>",
+    "  agent-comm:artifact:revoke <artifactDigest> --artifact-type <ContactCard|TransportBinding>",
+    "  agent-comm:artifact:import-revocation <file|raw-json>",
     "  agent-comm:contacts:list",
     "  agent-comm:connect:invite <contactRef> [--attach-inline-card]",
     "  agent-comm:connect:accept <contactRef> [--attach-inline-card]",
     "  agent-comm:connect:reject <contactRef>",
     "  agent-comm:peer:trust    (legacy/manual v1 fallback)",
-    "  agent-comm:send <ping|start_discovery> <peerId|contact:contactId>",
+    "  agent-comm:send <ping|probe_onchainos|start_discovery|request_mode_change> <peerId|contact:contactId>",
     "",
     "Notes:",
     "  Preferred flow: add contact via card import, then connect via invite/accept.",
@@ -444,6 +503,84 @@ export async function run(): Promise<void> {
     return;
   }
 
+  if (command === "agent-comm:artifact:revoke") {
+    const parsed = parseCliArgs(argv.slice(1));
+    const [artifactDigest] = parsed.positionals;
+    if (!artifactDigest) {
+      throw new Error(
+        "Usage: tsx src/index.ts agent-comm:artifact:revoke <artifactDigest> --artifact-type <ContactCard|TransportBinding> [--replacement-digest <bytes32>] [--reason <text>] [--revoked-at <unix>] [--source <label>]",
+      );
+    }
+
+    const artifactType = parseRevocableArtifactType(readFlag(parsed, "artifact-type"));
+    const store = new StateStore(config.dataDir);
+    const vault = new VaultService(store);
+    try {
+      const result = await revokeIdentityArtifact(
+        {
+          config,
+          store,
+          vault,
+        },
+        {
+          artifactDigest,
+          artifactType,
+          replacementDigest: readFlag(parsed, "replacement-digest"),
+          reason: readFlag(parsed, "reason"),
+          revokedAt: parseNonNegativeIntegerFlag(readFlag(parsed, "revoked-at"), "revoked-at"),
+          source: readFlag(parsed, "source"),
+        },
+      );
+      writeJson({
+        action: "agent-comm:artifact:revoke",
+        ...result,
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
+  if (command === "agent-comm:artifact:import-revocation") {
+    const parsed = parseCliArgs(argv.slice(1));
+    const [inputSource] = parsed.positionals;
+    if (!inputSource) {
+      throw new Error("Usage: tsx src/index.ts agent-comm:artifact:import-revocation <file|raw-json>");
+    }
+
+    const payload = readJsonInput(inputSource);
+    const store = new StateStore(config.dataDir);
+    try {
+      const result = await importRevocationNoticeFromJson(
+        {
+          config,
+          store,
+        },
+        payload.raw,
+        {
+          source: readFlag(parsed, "source") ?? payload.source,
+          expectedChainId: parsePositiveIntegerFlag(
+            readFlag(parsed, "expected-chain-id"),
+            "expected-chain-id",
+          ),
+          nowUnixSeconds: parseNonNegativeIntegerFlag(
+            readFlag(parsed, "now-unix-seconds"),
+            "now-unix-seconds",
+          ),
+        },
+      );
+      writeJson({
+        action: "agent-comm:artifact:import-revocation",
+        ...(payload.inputPath ? { inputPath: payload.inputPath } : {}),
+        inputSource: payload.source,
+        ...result,
+      });
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
   if (command === "agent-comm:contacts:list") {
     const store = new StateStore(config.dataDir);
     const vault = new VaultService(store);
@@ -618,7 +755,7 @@ export async function run(): Promise<void> {
     const [commandType, peerId] = parsed.positionals;
     if (!commandType || !peerId) {
       throw new Error(
-        "Usage: tsx src/index.ts agent-comm:send <ping|start_discovery> <peerId|contact:contactId> [--sender-peer-id <peerId>] [ping flags] [start_discovery flags]",
+        "Usage: tsx src/index.ts agent-comm:send <ping|probe_onchainos|start_discovery|request_mode_change> <peerId|contact:contactId> [--sender-peer-id <peerId>] [command flags]",
       );
     }
 
@@ -680,8 +817,58 @@ export async function run(): Promise<void> {
         return;
       }
 
+      if (commandType === "probe_onchainos") {
+        const result = await sendCommProbeOnchainOs(
+          {
+            config,
+            store,
+            vault,
+          },
+          {
+            peerId,
+            senderPeerId: readFlag(parsed, "sender-peer-id"),
+            pair: readFlag(parsed, "pair")?.toUpperCase(),
+            chainIndex: readFlag(parsed, "chain-index"),
+            notionalUsd: parsePositiveNumberFlag(
+              readFlag(parsed, "notional-usd"),
+              "notional-usd",
+            ),
+          },
+        );
+        writeJson({
+          action: "agent-comm:send",
+          ...result,
+        });
+        return;
+      }
+
+      if (commandType === "request_mode_change") {
+        const requestedMode = readFlag(parsed, "requested-mode");
+        if (!isExecutionMode(requestedMode)) {
+          throw new Error("request_mode_change requires --requested-mode paper|live");
+        }
+        const result = await sendCommRequestModeChange(
+          {
+            config,
+            store,
+            vault,
+          },
+          {
+            peerId,
+            senderPeerId: readFlag(parsed, "sender-peer-id"),
+            requestedMode,
+            reason: readFlag(parsed, "reason"),
+          },
+        );
+        writeJson({
+          action: "agent-comm:send",
+          ...result,
+        });
+        return;
+      }
+
       throw new Error(
-        `Unsupported agent-comm command: ${commandType}. Supported values: ping, start_discovery`,
+        `Unsupported agent-comm command: ${commandType}. Supported values: ping, probe_onchainos, start_discovery, request_mode_change`,
       );
     } finally {
       store.close();
@@ -695,6 +882,7 @@ export async function run(): Promise<void> {
     logger,
     store: skill.store,
     discovery: skill.discovery,
+    engine: skill.engine,
     onchain: skill.onchain,
     vault,
   });

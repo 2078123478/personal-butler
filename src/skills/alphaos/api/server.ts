@@ -14,14 +14,18 @@ import { DiscoveryEngine } from "../runtime/discovery/discovery-engine";
 import type { BacktestSnapshotRow, RiskPolicy, SkillManifest } from "../types";
 import {
   exportIdentityArtifactBundle,
+  importRevocationNotice,
   importIdentityArtifactBundle,
   LEGACY_MANUAL_PEER_TRUST_WARNING,
   registerTrustedPeerEntry,
+  revokeIdentityArtifact,
   rotateCommWallet,
   sendCommConnectionAccept,
   sendCommConnectionInvite,
   sendCommConnectionReject,
   sendCommPing,
+  sendCommProbeOnchainOs,
+  sendCommRequestModeChange,
   sendCommStartDiscovery,
   type AgentCommEntrypointDependencies,
 } from "../runtime/agent-comm/entrypoints";
@@ -383,6 +387,10 @@ function isDiscoveryStrategyId(input: string): input is "spread-threshold" | "me
   return input === "spread-threshold" || input === "mean-reversion" || input === "volatility-breakout";
 }
 
+function isExecutionMode(input: string): input is "paper" | "live" {
+  return input === "paper" || input === "live";
+}
+
 function normalizeDiscoveryPairs(input: unknown): string[] | null {
   if (!Array.isArray(input)) {
     return null;
@@ -550,6 +558,55 @@ function parsePingSendBody(
   };
 }
 
+function parseProbeOnchainOsSendBody(
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        peerId: string;
+        senderPeerId?: string;
+        pair?: string;
+        chainIndex?: string;
+        notionalUsd?: number;
+      };
+    }
+  | { ok: false; error: string } {
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const peerId = readTrimmedString(payload.peerId);
+  if (!peerId) {
+    return { ok: false, error: "peerId is required" };
+  }
+
+  const senderPeerId = parseOptionalStringField(payload, "senderPeerId");
+  if (!senderPeerId.ok) {
+    return senderPeerId;
+  }
+  const pair = parseOptionalStringField(payload, "pair");
+  if (!pair.ok) {
+    return pair;
+  }
+  const chainIndex = parseOptionalStringField(payload, "chainIndex");
+  if (!chainIndex.ok) {
+    return chainIndex;
+  }
+  const notionalUsd = parseOptionalPositiveNumber(payload.notionalUsd);
+  if (!notionalUsd.ok) {
+    return { ok: false, error: "notionalUsd must be a positive number" };
+  }
+
+  return {
+    ok: true,
+    input: {
+      peerId,
+      ...(senderPeerId.value ? { senderPeerId: senderPeerId.value } : {}),
+      ...(pair.value ? { pair: pair.value.toUpperCase() } : {}),
+      ...(chainIndex.value ? { chainIndex: chainIndex.value } : {}),
+      ...(notionalUsd.value !== undefined ? { notionalUsd: notionalUsd.value } : {}),
+    },
+  };
+}
+
 function parseStartDiscoverySendBody(
   body: unknown,
 ):
@@ -618,6 +675,50 @@ function parseStartDiscoverySendBody(
   };
 }
 
+function parseRequestModeChangeSendBody(
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        peerId: string;
+        senderPeerId?: string;
+        requestedMode: "paper" | "live";
+        reason?: string;
+      };
+    }
+  | { ok: false; error: string } {
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const peerId = readTrimmedString(payload.peerId);
+  if (!peerId) {
+    return { ok: false, error: "peerId is required" };
+  }
+
+  const requestedMode = readTrimmedString(payload.requestedMode);
+  if (!isExecutionMode(requestedMode)) {
+    return { ok: false, error: "requestedMode must be paper or live" };
+  }
+
+  const senderPeerId = parseOptionalStringField(payload, "senderPeerId");
+  if (!senderPeerId.ok) {
+    return senderPeerId;
+  }
+  const reason = parseOptionalStringField(payload, "reason");
+  if (!reason.ok) {
+    return reason;
+  }
+
+  return {
+    ok: true,
+    input: {
+      peerId,
+      requestedMode,
+      ...(senderPeerId.value ? { senderPeerId: senderPeerId.value } : {}),
+      ...(reason.value ? { reason: reason.value } : {}),
+    },
+  };
+}
+
 function parseCardImportBody(
   body: unknown,
 ):
@@ -655,6 +756,111 @@ function parseCardImportBody(
     ok: true,
     input: {
       bundle: payload.bundle,
+      ...(source.value ? { source: source.value } : {}),
+      ...(expectedChainId.value !== undefined ? { expectedChainId: expectedChainId.value } : {}),
+      ...(nowUnixSeconds.value !== undefined ? { nowUnixSeconds: nowUnixSeconds.value } : {}),
+    },
+  };
+}
+
+function parseArtifactRevokeBody(
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        artifactDigest: string;
+        artifactType: "ContactCard" | "TransportBinding";
+        replacementDigest?: string;
+        reason?: string;
+        revokedAt?: number;
+        source?: string;
+      };
+    }
+  | { ok: false; error: string } {
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const artifactDigest = readTrimmedString(payload.artifactDigest);
+  if (!artifactDigest) {
+    return { ok: false, error: "artifactDigest is required" };
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(artifactDigest)) {
+    return { ok: false, error: "artifactDigest must be a bytes32 hex string" };
+  }
+
+  const artifactType = readTrimmedString(payload.artifactType);
+  if (artifactType !== "ContactCard" && artifactType !== "TransportBinding") {
+    return { ok: false, error: "artifactType must be ContactCard or TransportBinding" };
+  }
+
+  const replacementDigest = parseOptionalStringField(payload, "replacementDigest");
+  if (!replacementDigest.ok) {
+    return replacementDigest;
+  }
+  if (replacementDigest.value && !/^0x[0-9a-fA-F]{64}$/.test(replacementDigest.value)) {
+    return { ok: false, error: "replacementDigest must be a bytes32 hex string" };
+  }
+
+  const reason = parseOptionalStringField(payload, "reason");
+  if (!reason.ok) {
+    return reason;
+  }
+  const source = parseOptionalStringField(payload, "source");
+  if (!source.ok) {
+    return source;
+  }
+  const revokedAt = parseOptionalNonNegativeInteger(payload.revokedAt);
+  if (!revokedAt.ok) {
+    return { ok: false, error: "revokedAt must be a non-negative integer" };
+  }
+
+  return {
+    ok: true,
+    input: {
+      artifactDigest,
+      artifactType,
+      ...(replacementDigest.value ? { replacementDigest: replacementDigest.value } : {}),
+      ...(reason.value ? { reason: reason.value } : {}),
+      ...(source.value ? { source: source.value } : {}),
+      ...(revokedAt.value !== undefined ? { revokedAt: revokedAt.value } : {}),
+    },
+  };
+}
+
+function parseRevocationImportBody(
+  body: unknown,
+):
+  | {
+      ok: true;
+      input: {
+        notice: unknown;
+        source?: string;
+        expectedChainId?: number;
+        nowUnixSeconds?: number;
+      };
+    }
+  | { ok: false; error: string } {
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  if (!("notice" in payload)) {
+    return { ok: false, error: "notice is required" };
+  }
+
+  const source = parseOptionalStringField(payload, "source");
+  if (!source.ok) {
+    return source;
+  }
+  const expectedChainId = parseOptionalPositiveInteger(payload.expectedChainId);
+  if (!expectedChainId.ok) {
+    return { ok: false, error: "expectedChainId must be a positive integer" };
+  }
+  const nowUnixSeconds = parseOptionalNonNegativeInteger(payload.nowUnixSeconds);
+  if (!nowUnixSeconds.ok) {
+    return { ok: false, error: "nowUnixSeconds must be a non-negative integer" };
+  }
+
+  return {
+    ok: true,
+    input: {
+      notice: payload.notice,
       ...(source.value ? { source: source.value } : {}),
       ...(expectedChainId.value !== undefined ? { expectedChainId: expectedChainId.value } : {}),
       ...(nowUnixSeconds.value !== undefined ? { nowUnixSeconds: nowUnixSeconds.value } : {}),
@@ -1529,7 +1735,7 @@ export function createServer(
 
   app.post("/api/v1/engine/mode", (req, res) => {
     const mode = req.body?.mode;
-    if (mode !== "paper" && mode !== "live") {
+    if (typeof mode !== "string" || !isExecutionMode(mode)) {
       res.status(400).json({ error: "mode must be paper or live" });
       return;
     }
@@ -1848,6 +2054,52 @@ export function createServer(
     }
   });
 
+  app.post("/api/v1/agent-comm/artifacts/revoke", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseArtifactRevokeBody(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(await revokeIdentityArtifact(deps, parsed.input));
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
+  app.post("/api/v1/agent-comm/artifacts/revocations/import", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseRevocationImportBody(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(
+        await importRevocationNotice(
+          {
+            config: deps.config,
+            store,
+          },
+          parsed.input,
+        ),
+      );
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
   app.get("/api/v1/agent-comm/invites", (req, res) => {
     const parsed = parseAgentInviteListQuery(req.query);
     if (!parsed.ok) {
@@ -1955,6 +2207,25 @@ export function createServer(
     }
   });
 
+  app.post("/api/v1/agent-comm/send/probe-onchainos", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseProbeOnchainOsSendBody(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(await sendCommProbeOnchainOs(deps, parsed.input));
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
   app.post("/api/v1/agent-comm/send/start-discovery", async (req, res) => {
     const deps = ensureAgentCommSendDeps(res);
     if (!deps) {
@@ -1969,6 +2240,25 @@ export function createServer(
 
     try {
       res.json(await sendCommStartDiscovery(deps, parsed.input));
+    } catch (error) {
+      handleAgentCommApiError(res, error);
+    }
+  });
+
+  app.post("/api/v1/agent-comm/send/request-mode-change", async (req, res) => {
+    const deps = ensureAgentCommSendDeps(res);
+    if (!deps) {
+      return;
+    }
+
+    const parsed = parseRequestModeChangeSendBody(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    try {
+      res.json(await sendCommRequestModeChange(deps, parsed.input));
     } catch (error) {
       handleAgentCommApiError(res, error);
     }

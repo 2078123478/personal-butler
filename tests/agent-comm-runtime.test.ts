@@ -69,6 +69,9 @@ function createStore(prefix: string): { dir: string; store: StateStore } {
 function createConfig(overrides: Partial<AlphaOsConfig>): AlphaOsConfig {
   delete process.env.COMM_ENABLED;
   delete process.env.COMM_RPC_URL;
+  delete process.env.COMM_RELAY_URL;
+  delete process.env.COMM_RELAY_TIMEOUT_MS;
+  delete process.env.COMM_SUBMIT_MODE;
   delete process.env.COMM_LISTENER_MODE;
   const base = loadConfig();
   return {
@@ -82,6 +85,17 @@ function createLoggerMock() {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+  };
+}
+
+function createEngineMock() {
+  return {
+    requestMode: vi.fn((mode: "paper" | "live") => ({
+      ok: true,
+      requestedMode: mode,
+      currentMode: mode,
+      reasons: [],
+    })),
   };
 }
 
@@ -113,6 +127,7 @@ describe("agent-comm runtime bootstrap", () => {
         logger: createLoggerMock() as never,
         store,
         discovery: {} as never,
+        engine: createEngineMock(),
         onchain: {} as never,
         vault: {
           getSecret: vi.fn(),
@@ -139,6 +154,7 @@ describe("agent-comm runtime bootstrap", () => {
         logger: createLoggerMock() as never,
         store,
         discovery: {} as never,
+        engine: createEngineMock(),
         onchain: {} as never,
         vault: {
           getSecret: vi.fn(() => {
@@ -171,6 +187,7 @@ describe("agent-comm runtime bootstrap", () => {
         logger: createLoggerMock() as never,
         store,
         discovery: {} as never,
+        engine: createEngineMock(),
         onchain: {} as never,
         vault: {
           getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
@@ -216,6 +233,7 @@ describe("agent-comm runtime bootstrap", () => {
       logger: createLoggerMock() as never,
       store,
       discovery: {} as never,
+      engine: createEngineMock(),
       onchain: {} as never,
       vault: {
         getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
@@ -287,6 +305,7 @@ describe("agent-comm runtime bootstrap", () => {
       logger: createLoggerMock() as never,
       store,
       discovery: {} as never,
+      engine: createEngineMock(),
       onchain: {} as never,
       vault: {
         getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
@@ -356,6 +375,7 @@ describe("agent-comm runtime bootstrap", () => {
       logger: createLoggerMock() as never,
       store,
       discovery: {} as never,
+      engine: createEngineMock(),
       onchain: {} as never,
       vault: {
         getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
@@ -430,6 +450,7 @@ describe("agent-comm runtime bootstrap", () => {
       logger: createLoggerMock() as never,
       store,
       discovery: {} as never,
+      engine: createEngineMock(),
       onchain: {} as never,
       vault: {
         getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
@@ -441,6 +462,187 @@ describe("agent-comm runtime bootstrap", () => {
     });
     expect(store.getAgentMessage("inbound-success")?.executedAt).toBeDefined();
     expect(runtime.getSnapshot().lastRuntimeError).toBeUndefined();
+
+    runtime.stop();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("executes probe_onchainos commands through onchain.probeConnection", async () => {
+    const { routeCommand } = await vi.importActual<
+      typeof import("../src/skills/alphaos/runtime/agent-comm/task-router")
+    >("../src/skills/alphaos/runtime/agent-comm/task-router");
+
+    const { store } = createStore("alphaos-comm-runtime-");
+    process.env.VAULT_MASTER_PASSWORD = "pass123";
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+    });
+
+    const onchain = {
+      probeConnection: vi.fn(async () => ({
+        ok: true,
+        configured: true,
+        mode: "v6" as const,
+        pair: "ETH/USDC",
+        chainIndex: "196",
+        notionalUsd: 50,
+        simulateRequired: true,
+        message: "v6 probe passed",
+        checkedAt: "2026-03-08T00:00:00.000Z",
+      })),
+    };
+    const engine = createEngineMock();
+    const message = store.insertAgentMessage({
+      id: "inbound-probe",
+      direction: "inbound",
+      peerId: "peer-a",
+      nonce: "nonce-probe",
+      commandType: "probe_onchainos",
+      ciphertext: "0xcipher",
+      status: "decrypted",
+      receivedAt: new Date().toISOString(),
+    });
+
+    processInboxMock.mockResolvedValue({
+      message,
+      command: {
+        type: "probe_onchainos",
+        payload: {
+          pair: "ETH/USDC",
+          chainIndex: "196",
+          notionalUsd: 50,
+        },
+      },
+    });
+    routeCommandMock.mockImplementation(routeCommand);
+
+    const stop = vi.fn();
+    startListenerMock.mockImplementation((_opts, onTransaction) => {
+      void onTransaction({
+        txHash: "0xprobe",
+        from: "0x1111111111111111111111111111111111111111",
+        to: "0x2222222222222222222222222222222222222222",
+        calldata: "0x1234",
+        blockNumber: 14n,
+        timestamp: new Date().toISOString(),
+      });
+      return stop;
+    });
+
+    const runtime = await startAgentCommRuntime({
+      config: createConfig({
+        commEnabled: true,
+        commListenerMode: "poll",
+        commRpcUrl: "http://localhost:8545",
+        commChainId: 196,
+        commWalletAlias: "agent-comm",
+      }),
+      logger: createLoggerMock() as never,
+      store,
+      discovery: {} as never,
+      engine,
+      onchain: onchain as never,
+      vault: {
+        getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
+      } as never,
+    });
+
+    await vi.waitFor(() => {
+      expect(store.getAgentMessage("inbound-probe")?.status).toBe("executed");
+    });
+    expect(onchain.probeConnection).toHaveBeenCalledWith({
+      pair: "ETH/USDC",
+      chainIndex: "196",
+      notionalUsd: 50,
+    });
+    expect(engine.requestMode).not.toHaveBeenCalled();
+
+    runtime.stop();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("rejects request_mode_change commands when engine.requestMode denies the mode change", async () => {
+    const { routeCommand } = await vi.importActual<
+      typeof import("../src/skills/alphaos/runtime/agent-comm/task-router")
+    >("../src/skills/alphaos/runtime/agent-comm/task-router");
+
+    const { store } = createStore("alphaos-comm-runtime-");
+    process.env.VAULT_MASTER_PASSWORD = "pass123";
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+    });
+
+    const engine = {
+      requestMode: vi.fn(() => ({
+        ok: false,
+        requestedMode: "live" as const,
+        currentMode: "paper" as const,
+        reasons: ["live gate blocked"],
+      })),
+    };
+    const message = store.insertAgentMessage({
+      id: "inbound-mode-change",
+      direction: "inbound",
+      peerId: "peer-a",
+      nonce: "nonce-mode-change",
+      commandType: "request_mode_change",
+      ciphertext: "0xcipher",
+      status: "decrypted",
+      receivedAt: new Date().toISOString(),
+    });
+
+    processInboxMock.mockResolvedValue({
+      message,
+      command: {
+        type: "request_mode_change",
+        payload: {
+          requestedMode: "live",
+          reason: "operator requested",
+        },
+      },
+    });
+    routeCommandMock.mockImplementation(routeCommand);
+
+    const stop = vi.fn();
+    startListenerMock.mockImplementation((_opts, onTransaction) => {
+      void onTransaction({
+        txHash: "0xmode",
+        from: "0x1111111111111111111111111111111111111111",
+        to: "0x2222222222222222222222222222222222222222",
+        calldata: "0x1234",
+        blockNumber: 15n,
+        timestamp: new Date().toISOString(),
+      });
+      return stop;
+    });
+
+    const runtime = await startAgentCommRuntime({
+      config: createConfig({
+        commEnabled: true,
+        commListenerMode: "poll",
+        commRpcUrl: "http://localhost:8545",
+        commChainId: 196,
+        commWalletAlias: "agent-comm",
+      }),
+      logger: createLoggerMock() as never,
+      store,
+      discovery: {} as never,
+      engine,
+      onchain: {
+        probeConnection: vi.fn(),
+      } as never,
+      vault: {
+        getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
+      } as never,
+    });
+
+    await vi.waitFor(() => {
+      expect(store.getAgentMessage("inbound-mode-change")?.status).toBe("rejected");
+    });
+    expect(engine.requestMode).toHaveBeenCalledWith("live");
+    expect(store.getAgentMessage("inbound-mode-change")?.error).toBe("live gate blocked");
 
     runtime.stop();
     expect(stop).toHaveBeenCalledOnce();
@@ -473,6 +675,7 @@ describe("agent-comm runtime bootstrap", () => {
       logger: createLoggerMock() as never,
       store,
       discovery: {} as never,
+      engine: createEngineMock(),
       onchain: {} as never,
       vault: {
         getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),
@@ -537,6 +740,7 @@ describe("agent-comm runtime bootstrap", () => {
       logger: createLoggerMock() as never,
       store,
       discovery: {} as never,
+      engine: createEngineMock(),
       onchain: {} as never,
       vault,
     });
@@ -611,6 +815,7 @@ describe("agent-comm runtime bootstrap", () => {
       logger: createLoggerMock() as never,
       store,
       discovery: {} as never,
+      engine: createEngineMock(),
       onchain: {} as never,
       vault: {
         getSecret: vi.fn(() => "0x1111111111111111111111111111111111111111111111111111111111111111"),

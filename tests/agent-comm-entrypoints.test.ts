@@ -9,12 +9,14 @@ import { decrypt, deriveSharedKey } from "../src/skills/alphaos/runtime/agent-co
 import {
   exportIdentityArtifactBundle,
   getCommIdentity,
+  importRevocationNotice,
   importIdentityArtifactBundle,
   importIdentityArtifactBundleFromJson,
   initCommWallet,
   initTemporaryDemoWallet,
   listLocalIdentityProfiles,
   registerTrustedPeerEntry,
+  revokeIdentityArtifact,
   rotateCommWallet,
   sendCommConnectionAccept,
   sendCommConnectionConfirm,
@@ -45,6 +47,9 @@ const stores: Array<{ dir: string; store: StateStore }> = [];
 function createConfig(overrides: Partial<AlphaOsConfig>): AlphaOsConfig {
   delete process.env.COMM_ENABLED;
   delete process.env.COMM_RPC_URL;
+  delete process.env.COMM_RELAY_URL;
+  delete process.env.COMM_RELAY_TIMEOUT_MS;
+  delete process.env.COMM_SUBMIT_MODE;
   delete process.env.COMM_LISTENER_MODE;
 
   const base = loadConfig();
@@ -107,6 +112,7 @@ function decryptOutboundCommand(
 afterEach(() => {
   process.env = { ...originalEnv };
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
   for (const entry of stores.splice(0)) {
     entry.store.close();
     fs.rmSync(entry.dir, { recursive: true, force: true });
@@ -266,6 +272,167 @@ describe("agent-comm entrypoints", () => {
     expect(imported.reasons[0]).toMatch(/invalid artifact bundle JSON/i);
   });
 
+  it("signs and applies a local transport-binding revocation notice", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    });
+    const exported = await exportIdentityArtifactBundle(deps, {
+      masterPassword: "pass123",
+      nowUnixSeconds: 1741348800,
+    });
+    await importIdentityArtifactBundle(
+      {
+        config: deps.config,
+        store: deps.store,
+      },
+      {
+        bundle: exported.bundle,
+        source: "unit-test",
+        nowUnixSeconds: 1741348800,
+      },
+    );
+
+    const revoked = await revokeIdentityArtifact(deps, {
+      masterPassword: "pass123",
+      artifactDigest: exported.transportBindingDigest,
+      artifactType: "TransportBinding",
+      reason: "rotate acw",
+      revokedAt: 1741349900,
+    });
+
+    expect(revoked.ok).toBe(true);
+    expect(revoked.artifactDigest).toBe(exported.transportBindingDigest);
+    expect(revoked.artifactType).toBe("TransportBinding");
+    expect(revoked.artifactStatus).toBe("revoked");
+    expect(revoked.noticeDigest).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(revoked.affectedEndpointIds.length).toBeGreaterThan(0);
+    expect(revoked.affectedContactIds.length).toBeGreaterThan(0);
+    expect(deps.store.getAgentArtifactStatus(exported.transportBindingDigest)?.status).toBe("revoked");
+    expect(
+      deps.store
+        .listAgentTransportEndpoints(10)
+        .some((endpoint) => endpoint.bindingDigest === exported.transportBindingDigest && endpoint.endpointStatus === "revoked"),
+    ).toBe(true);
+  });
+
+  it("imports a revocation notice and applies revoked status", async () => {
+    const sourceDeps = createDeps("alphaos-comm-entry-source-");
+    initCommWallet(sourceDeps, {
+      masterPassword: "pass123",
+      privateKey: "0x1212121212121212121212121212121212121212121212121212121212121212",
+    });
+    const exported = await exportIdentityArtifactBundle(sourceDeps, {
+      masterPassword: "pass123",
+      nowUnixSeconds: 1741348800,
+    });
+    const localRevocation = await revokeIdentityArtifact(sourceDeps, {
+      masterPassword: "pass123",
+      artifactDigest: exported.contactCardDigest,
+      artifactType: "ContactCard",
+      reason: "identity reset",
+      revokedAt: 1741350000,
+    });
+
+    const targetDeps = createDeps("alphaos-comm-entry-target-");
+    await importIdentityArtifactBundle(
+      {
+        config: targetDeps.config,
+        store: targetDeps.store,
+      },
+      {
+        bundle: exported.bundle,
+        source: "unit-test-target",
+        nowUnixSeconds: 1741348800,
+      },
+    );
+
+    const imported = await importRevocationNotice(
+      {
+        config: targetDeps.config,
+        store: targetDeps.store,
+      },
+      {
+        notice: localRevocation.notice,
+        source: "unit-test-import-revocation",
+      },
+    );
+
+    expect(imported.ok).toBe(true);
+    expect(imported.artifactDigest).toBe(exported.contactCardDigest);
+    expect(imported.artifactType).toBe("ContactCard");
+    expect(imported.artifactStatus).toBe("revoked");
+    expect(targetDeps.store.getAgentArtifactStatus(exported.contactCardDigest)?.status).toBe("revoked");
+    expect(targetDeps.store.getAgentContactByIdentityWallet(exported.identity.identityWallet)?.status).toBe(
+      "revoked",
+    );
+  });
+
+  it("revokes every endpoint that references a binding digest", async () => {
+    const deps = createDeps("alphaos-comm-entry-");
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    });
+    const exported = await exportIdentityArtifactBundle(deps, {
+      masterPassword: "pass123",
+      nowUnixSeconds: 1741348800,
+    });
+    await importIdentityArtifactBundle(
+      {
+        config: deps.config,
+        store: deps.store,
+      },
+      {
+        bundle: exported.bundle,
+        source: "unit-test",
+        nowUnixSeconds: 1741348800,
+      },
+    );
+
+    const contact = deps.store.getAgentContactByIdentityWallet(exported.identity.identityWallet);
+    expect(contact).not.toBeNull();
+    const importedEndpoint = deps.store.listAgentTransportEndpoints(1)[0];
+    expect(importedEndpoint).toBeDefined();
+
+    for (let index = 0; index < 205; index += 1) {
+      deps.store.upsertAgentTransportEndpoint({
+        contactId: contact!.contactId,
+        identityWallet: contact!.identityWallet,
+        chainId: importedEndpoint!.chainId,
+        receiveAddress: `0x${(index + 1000).toString(16).padStart(40, "0")}`,
+        pubkey: importedEndpoint!.pubkey,
+        keyId: `rotated-key-${index}`,
+        bindingDigest: exported.transportBindingDigest,
+        endpointStatus: "active",
+        source: "unit-test-endpoint-fanout",
+      });
+    }
+
+    const before = deps.store
+      .listAgentTransportEndpoints(1000)
+      .filter((endpoint) => endpoint.bindingDigest === exported.transportBindingDigest);
+    expect(before).toHaveLength(206);
+
+    const revoked = await revokeIdentityArtifact(deps, {
+      masterPassword: "pass123",
+      artifactDigest: exported.transportBindingDigest,
+      artifactType: "TransportBinding",
+      reason: "rotate acw",
+      revokedAt: 1741349900,
+    });
+
+    expect(revoked.ok).toBe(true);
+    expect(revoked.affectedEndpointIds).toHaveLength(206);
+    expect(
+      deps.store
+        .listAgentTransportEndpoints(1000)
+        .filter((endpoint) => endpoint.bindingDigest === exported.transportBindingDigest)
+        .every((endpoint) => endpoint.endpointStatus === "revoked"),
+    ).toBe(true);
+  });
+
   it("preserves legacy single-wallet installs as temporary dual-use until rotation", async () => {
     const deps = createDeps("alphaos-comm-entry-");
     const legacyPrivateKey =
@@ -412,6 +579,69 @@ describe("agent-comm entrypoints", () => {
       },
     });
     expect(deps.store.findAgentMessage("peer-b", "outbound", result.nonce)?.status).toBe("sent");
+  });
+
+  it("falls back to relay when sendCommPing direct submit fails", async () => {
+    const deps = createDeps("alphaos-comm-entry-", {
+      commRelayUrl: "https://relay.example/submit",
+      commRelayTimeoutMs: 9000,
+      commSubmitMode: "direct",
+    });
+    const localPrivateKey =
+      "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const peerWallet = restoreShadowWallet(
+      "0x2626262626262626262626262626262626262626262626262626262626262626",
+    );
+
+    initCommWallet(deps, {
+      masterPassword: "pass123",
+      privateKey: localPrivateKey,
+    });
+    registerTrustedPeerEntry(
+      {
+        store: deps.store,
+      },
+      {
+        peerId: "peer-relay-fallback",
+        walletAddress: peerWallet.getAddress(),
+        pubkey: peerWallet.getPublicKey(),
+      },
+    );
+
+    const relayFetch = vi.fn(async () => new Response(JSON.stringify({ txHash: "0xtx-relay-ping" })));
+    vi.stubGlobal("fetch", relayFetch);
+
+    createPublicClientMock.mockReturnValue({
+      getChainId: vi.fn(async () => 196),
+      getTransactionCount: vi.fn(async () => 70),
+    });
+    const sendTransaction = vi.fn(async () => {
+      throw new Error("rpc send failed");
+    });
+    const signTransaction = vi.fn(async () => "0xsigned-relay-raw");
+    createWalletClientMock.mockReturnValue({
+      sendTransaction,
+      signTransaction,
+    });
+
+    const result = await sendCommPing(deps, {
+      masterPassword: "pass123",
+      peerId: "peer-relay-fallback",
+      senderPeerId: "peer-a",
+      note: "relay-fallback",
+    });
+
+    expect(result.txHash).toBe("0xtx-relay-ping");
+    expect(sendTransaction).toHaveBeenCalledTimes(1);
+    expect(signTransaction).toHaveBeenCalledTimes(1);
+    expect(relayFetch).toHaveBeenCalledTimes(1);
+
+    const fetchRequest = (relayFetch.mock.calls[0] as unknown[] | undefined)?.[1] as
+      | RequestInit
+      | undefined;
+    expect(fetchRequest?.method).toBe("POST");
+    expect(String(fetchRequest?.body ?? "")).toContain("0xsigned-relay-raw");
+    expect(deps.store.findAgentMessage("peer-relay-fallback", "outbound", result.nonce)?.status).toBe("sent");
   });
 
   it("sends ping to a trusted contact reference without a legacy peer record", async () => {

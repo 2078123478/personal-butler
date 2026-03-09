@@ -305,8 +305,9 @@ export const encryptedEnvelopeSchema = z.union([
 ]);
 
 export const encryptedEnvelopeV2PaymentSchema = strictObject({
-  asset: nonEmptyStringSchema.optional(),
-  amount: nonEmptyStringSchema.optional(),
+  asset: nonEmptyStringSchema,
+  amount: nonEmptyStringSchema,
+  proof: x402ProofSchema.optional(),
   metadata: jsonObjectSchema.optional(),
 });
 

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { privateKeyToAccount } from "viem/accounts";
 import {
   buildLocalIdentityArtifacts,
   signIdentityArtifactBundle,
@@ -16,8 +17,10 @@ import {
   AGENT_COMM_ENVELOPE_VERSION,
   AGENT_COMM_KEX_SUITE_V2,
   agentCommandSchema,
+  type X402Proof,
 } from "../src/skills/alphaos/runtime/agent-comm/types";
 import type { TransactionEvent } from "../src/skills/alphaos/runtime/agent-comm/tx-listener";
+import { buildX402SigningPayload } from "../src/skills/alphaos/runtime/agent-comm/x402-adapter";
 import { StateStore } from "../src/skills/alphaos/runtime/state-store";
 
 const LOCAL_PRIVATE_KEY =
@@ -69,6 +72,36 @@ async function buildInlineCardBundle(input: {
   });
 }
 
+async function buildSignedX402Proof(input: {
+  signerPrivateKey: `0x${string}`;
+  payer: string;
+  payee?: string;
+  asset: string;
+  amount: string;
+  nonce: string;
+  expiresAt?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<X402Proof> {
+  const signer = privateKeyToAccount(input.signerPrivateKey);
+  const proof: X402Proof = {
+    scheme: "x402",
+    payer: input.payer,
+    payee: input.payee,
+    asset: input.asset,
+    amount: input.amount,
+    nonce: input.nonce,
+    expiresAt: input.expiresAt,
+    metadata: input.metadata,
+  };
+  const signature = await signer.signMessage({
+    message: buildX402SigningPayload(proof),
+  });
+  return {
+    ...proof,
+    signature,
+  };
+}
+
 function toInboxEvent(input: {
   senderPeerId?: string;
   nonce?: string;
@@ -115,8 +148,9 @@ function toInboxEventV2(input: {
   timestamp?: string;
   command: unknown;
   payment?: {
-    asset?: string;
-    amount?: string;
+    asset: string;
+    amount: string;
+    proof?: X402Proof;
     metadata?: Record<string, unknown>;
   };
   inlineCard?: unknown;
@@ -1047,6 +1081,125 @@ describe("agent-comm inbox processor v2 groundwork", () => {
     expect(store.getAgentMessage(result.message.id)?.payment).toEqual(result.message.payment);
   });
 
+  it("keeps observe mode as paid_pending when x402 proof verification fails", async () => {
+    const store = createStore("alphaos-inbox-");
+    const invalidProof = await buildSignedX402Proof({
+      signerPrivateKey: LOCAL_PRIVATE_KEY,
+      payer: senderWallet.getAddress(),
+      payee: localWallet.getAddress(),
+      asset: "USDC",
+      amount: "1000000",
+      nonce: "proof-nonce-observe",
+      expiresAt: "2026-04-07T00:00:00.000Z",
+    });
+
+    const result = await processInbox(
+      {
+        ...getLocalReceiveOptions(store),
+        config: {
+          x402Mode: "observe",
+        },
+      },
+      toInboxEventV2({
+        msgId: "24242424-2424-4242-8242-242424242424",
+        txHash: "0xtx-v2-x402-observe-invalid",
+        command: {
+          type: "ping",
+          payload: {
+            echo: "observe",
+          },
+        },
+        payment: {
+          asset: "USDC",
+          amount: "1000000",
+          proof: invalidProof,
+        },
+      }),
+    );
+
+    expect(result.message.status).toBe("paid_pending");
+    expect(result.message.trustOutcome).toBe("paid_pending");
+    expect(result.message.error).toContain("x402 validation failed (observe)");
+  });
+
+  it("rejects untrusted paid v2 business commands in enforce mode when proof is missing", async () => {
+    const store = createStore("alphaos-inbox-");
+
+    const result = await processInbox(
+      {
+        ...getLocalReceiveOptions(store),
+        config: {
+          x402Mode: "enforce",
+        },
+      },
+      toInboxEventV2({
+        msgId: "25252525-2525-4252-8252-252525252525",
+        txHash: "0xtx-v2-x402-enforce-missing",
+        command: {
+          type: "ping",
+          payload: {
+            echo: "enforce-missing",
+          },
+        },
+        payment: {
+          asset: "USDC",
+          amount: "1000000",
+        },
+      }),
+    );
+
+    expect(result.message.status).toBe("rejected");
+    expect(result.message.trustOutcome).toBe("x402_enforce_rejected");
+    expect(result.message.error).toContain("missing x402 proof");
+  });
+
+  it("allows paid_pending in enforce mode when x402 proof is valid", async () => {
+    const store = createStore("alphaos-inbox-");
+    const validProof = await buildSignedX402Proof({
+      signerPrivateKey: SENDER_PRIVATE_KEY,
+      payer: senderWallet.getAddress(),
+      payee: localWallet.getAddress(),
+      asset: "USDC",
+      amount: "1000000",
+      nonce: "proof-nonce-enforce-valid",
+      expiresAt: "2026-04-07T00:00:00.000Z",
+      metadata: {
+        invoiceId: "inv-x402-valid-1",
+      },
+    });
+
+    const result = await processInbox(
+      {
+        ...getLocalReceiveOptions(store),
+        config: {
+          x402Mode: "enforce",
+        },
+      },
+      toInboxEventV2({
+        msgId: "26262626-2626-4262-8262-262626262626",
+        txHash: "0xtx-v2-x402-enforce-valid",
+        command: {
+          type: "ping",
+          payload: {
+            echo: "enforce-valid",
+          },
+        },
+        payment: {
+          asset: "USDC",
+          amount: "1000000",
+          proof: validProof,
+          metadata: {
+            invoiceId: "inv-x402-valid-1",
+          },
+        },
+      }),
+    );
+
+    expect(result.message.status).toBe("paid_pending");
+    expect(result.message.trustOutcome).toBe("paid_pending");
+    expect(result.message.error).toBeUndefined();
+  });
+
   it("rejects v2 envelopes when decrypted sender transport does not match tx.from", async () => {
     const store = createStore("alphaos-inbox-");
 
@@ -1104,6 +1257,38 @@ describe("agent-comm inbox processor v2 groundwork", () => {
       ),
     ).rejects.toMatchObject({
       code: "UNAUTHORIZED_TRANSPORT",
+    });
+  });
+
+  it("rejects v2 messages when senderCardDigest is revoked", async () => {
+    const store = createStore("alphaos-inbox-");
+    const seeded = await seedTrustedV2Contact(store);
+    store.upsertAgentArtifactStatus({
+      artifactDigest: seeded.contactCardDigest,
+      artifactType: "ContactCard",
+      identityWallet: seeded.contact.identityWallet,
+      status: "revoked",
+      revokedByDigest: "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      revokedAt: 1772841700,
+      reason: "compromised identity card",
+    });
+
+    await expect(
+      processInbox(
+        getLocalReceiveOptions(store),
+        toInboxEventV2({
+          msgId: "77777777-7777-4777-8777-777777777777",
+          txHash: "0xtx-v2-revoked-card",
+          senderIdentityWallet: seeded.contact.identityWallet,
+          senderCardDigest: seeded.contactCardDigest,
+          command: {
+            type: "ping",
+            payload: {},
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "REVOKED_CONTACT_CARD",
     });
   });
 

@@ -80,12 +80,44 @@ describe("agent-comm crypto and codec", () => {
 });
 
 describe("tx-listener inbound filtering", () => {
+  const chainId = 196;
+  const targetAddress = "0x1111111111111111111111111111111111111111";
+
+  function createStore() {
+    return {
+      getListenerCursor: vi.fn(() => null),
+      upsertListenerCursor: vi.fn(),
+    };
+  }
+
+  function startPollingListener({
+    startBlockNumber,
+    store,
+    onTransaction,
+  }: {
+    startBlockNumber: bigint;
+    store: ReturnType<typeof createStore>;
+    onTransaction: Parameters<typeof startListener>[1];
+  }) {
+    return startListener(
+      {
+        rpcUrl: "http://localhost:8545",
+        chainId,
+        address: targetAddress,
+        pollIntervalMs: 1000,
+        store: store as unknown as StateStore,
+        mode: "poll",
+        startBlockNumber,
+      },
+      onTransaction,
+    );
+  }
+
   afterEach(() => {
     vi.clearAllMocks();
   });
 
   it("only emits transactions addressed to the listener wallet", async () => {
-    const targetAddress = "0x1111111111111111111111111111111111111111";
     const inboundTx = {
       hash: "0xaaa",
       from: "0x2222222222222222222222222222222222222222",
@@ -109,7 +141,7 @@ describe("tx-listener inbound filtering", () => {
     };
 
     createPublicClientMock.mockReturnValue({
-      getChainId: vi.fn(async () => 196),
+      getChainId: vi.fn(async () => chainId),
       getBlockNumber: vi.fn(async () => 7n),
       getBlock: vi.fn(async () => ({
         timestamp: 1n,
@@ -118,23 +150,8 @@ describe("tx-listener inbound filtering", () => {
     });
 
     const onTransaction = vi.fn(async () => undefined);
-    const store = {
-      getListenerCursor: vi.fn(() => null),
-      upsertListenerCursor: vi.fn(),
-    } as unknown as StateStore;
-
-    const stop = startListener(
-      {
-        rpcUrl: "http://localhost:8545",
-        chainId: 196,
-        address: targetAddress,
-        pollIntervalMs: 1000,
-        store,
-        mode: "poll",
-        startBlockNumber: 7n,
-      },
-      onTransaction,
-    );
+    const store = createStore();
+    const stop = startPollingListener({ startBlockNumber: 7n, store, onTransaction });
 
     await vi.waitFor(() => {
       expect(onTransaction).toHaveBeenCalledTimes(1);
@@ -150,7 +167,6 @@ describe("tx-listener inbound filtering", () => {
   });
 
   it("uses receipt-indexed catch-up when behind and only fetches matching transactions", async () => {
-    const targetAddress = "0x1111111111111111111111111111111111111111";
     const matchingTxHash = "0xmatch";
     const nonMatchingTxHash = "0xother";
     const getBlockReceipts = vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => {
@@ -196,7 +212,7 @@ describe("tx-listener inbound filtering", () => {
     });
 
     createPublicClientMock.mockReturnValue({
-      getChainId: vi.fn(async () => 196),
+      getChainId: vi.fn(async () => chainId),
       getBlockNumber: vi.fn(async () => 8n),
       getBlockReceipts,
       getBlock,
@@ -204,23 +220,8 @@ describe("tx-listener inbound filtering", () => {
     });
 
     const onTransaction = vi.fn(async () => undefined);
-    const store = {
-      getListenerCursor: vi.fn(() => null),
-      upsertListenerCursor: vi.fn(),
-    } as unknown as StateStore;
-
-    const stop = startListener(
-      {
-        rpcUrl: "http://localhost:8545",
-        chainId: 196,
-        address: targetAddress,
-        pollIntervalMs: 1000,
-        store,
-        mode: "poll",
-        startBlockNumber: 7n,
-      },
-      onTransaction,
-    );
+    const store = createStore();
+    const stop = startPollingListener({ startBlockNumber: 7n, store, onTransaction });
 
     await vi.waitFor(() => {
       expect(onTransaction).toHaveBeenCalledTimes(1);
@@ -244,7 +245,6 @@ describe("tx-listener inbound filtering", () => {
   });
 
   it("falls back to full block scan when block receipts are unsupported", async () => {
-    const targetAddress = "0x1111111111111111111111111111111111111111";
     const inboundTx = {
       hash: "0xaaa",
       from: "0x2222222222222222222222222222222222222222",
@@ -279,30 +279,15 @@ describe("tx-listener inbound filtering", () => {
     });
 
     createPublicClientMock.mockReturnValue({
-      getChainId: vi.fn(async () => 196),
+      getChainId: vi.fn(async () => chainId),
       getBlockNumber: vi.fn(async () => 7n),
       getBlockReceipts,
       getBlock,
     });
 
     const onTransaction = vi.fn(async () => undefined);
-    const store = {
-      getListenerCursor: vi.fn(() => null),
-      upsertListenerCursor: vi.fn(),
-    } as unknown as StateStore;
-
-    const stop = startListener(
-      {
-        rpcUrl: "http://localhost:8545",
-        chainId: 196,
-        address: targetAddress,
-        pollIntervalMs: 1000,
-        store,
-        mode: "poll",
-        startBlockNumber: 6n,
-      },
-      onTransaction,
-    );
+    const store = createStore();
+    const stop = startPollingListener({ startBlockNumber: 6n, store, onTransaction });
 
     await vi.waitFor(() => {
       expect(onTransaction).toHaveBeenCalledTimes(1);

@@ -2299,6 +2299,17 @@ export class StateStore {
     return rows.map((row) => this.toAgentTransportEndpoint(row));
   }
 
+  listAgentTransportEndpointsByBindingDigest(bindingDigest: string): AgentTransportEndpoint[] {
+    const rows = this.alphaDb
+      .prepare(
+        `${agentTransportEndpointSelectSql}
+         WHERE binding_digest = ?
+         ORDER BY updated_at DESC`,
+      )
+      .all(bindingDigest) as AgentTransportEndpointRow[];
+    return rows.map((row) => this.toAgentTransportEndpoint(row));
+  }
+
   upsertAgentConnectionEvent(input: {
     id?: string;
     contactId: string;

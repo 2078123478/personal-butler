@@ -35,8 +35,10 @@ import {
   type AgentMessageStatus,
   type AgentPeer,
   type EncryptedEnvelopeV2Payment,
+  type X402Mode,
 } from "./types";
 import type { TransactionEvent } from "./tx-listener";
+import { verifyX402Proof } from "./x402-adapter";
 
 export interface InboxProcessorOptions {
   wallet: ShadowWallet;
@@ -45,6 +47,7 @@ export interface InboxProcessorOptions {
   receiveKeys?: ResolvedReceiveKey[];
   config?: {
     commAutoAcceptInvites?: boolean;
+    x402Mode?: X402Mode;
   };
 }
 
@@ -112,6 +115,12 @@ interface InviteContactDecision {
   autoAccepted: boolean;
 }
 
+interface UntrustedBusinessCommandDecision {
+  status: AgentMessageStatus;
+  trustOutcome: string;
+  error?: string;
+}
+
 function dedupeStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.length > 0))];
 }
@@ -122,6 +131,12 @@ function toNowUnixSeconds(input: string): number | undefined {
     return undefined;
   }
   return Math.floor(parsed / 1000);
+}
+
+function isBlockedOrRevokedStatus(
+  status: AgentContact["status"] | undefined,
+): status is "blocked" | "revoked" {
+  return status === "blocked" || status === "revoked";
 }
 
 function getInlineCardAttachment(
@@ -144,6 +159,7 @@ function materializeInlineCardContact(
     existingContact: AgentContact | null;
     senderPeerId?: string;
     contactCard: AgentCommSignedContactCardArtifact;
+    contactCardDigest: string;
     transportBinding: AgentCommSignedTransportBindingArtifact;
     transportBindingDigest: string;
   },
@@ -176,7 +192,10 @@ function materializeInlineCardContact(
       existingContact?.capabilities && existingContact.capabilities.length > 0
         ? existingContact.capabilities
         : normalizeOptionalStringList(input.contactCard.defaults.capabilities) ?? [],
-    metadata: existingContact?.metadata,
+    metadata: {
+      ...(existingContact?.metadata ?? {}),
+      contactCardDigest: input.contactCardDigest,
+    },
   });
 
   store.upsertAgentTransportEndpoint({
@@ -289,6 +308,7 @@ async function evaluateInlineCardAttachment(
     existingContact: input.existingContact,
     senderPeerId: input.senderPeerId,
     contactCard: verification.contactCard.artifact,
+    contactCardDigest: verification.contactCard.digest,
     transportBinding: verification.transportBinding.artifact,
     transportBindingDigest: verification.transportBinding.digest,
   });
@@ -562,6 +582,19 @@ function assertAuthorizedSenderTransport(
         },
       );
     }
+
+    const cardStatus = store.getAgentArtifactStatus(input.senderCardDigest);
+    if (cardStatus?.status === "revoked") {
+      throw new InboxProcessingError(
+        "REVOKED_CONTACT_CARD",
+        "Sender contact card is revoked",
+        {
+          identityWallet: input.senderIdentityWallet,
+          senderAddress: input.senderAddress,
+          cardDigest: input.senderCardDigest,
+        },
+      );
+    }
   }
 }
 
@@ -586,10 +619,8 @@ function ensureTrustedPeerContact(store: StateStore, peer: AgentPeer): AgentCont
   const existingContact =
     store.getAgentContactByIdentityWallet(peer.walletAddress) ??
     store.getAgentContactByLegacyPeerId(peer.peerId);
-  const stableStatus =
-    existingContact?.status === "blocked" || existingContact?.status === "revoked"
-      ? existingContact.status
-      : "trusted";
+  const existingStatus = existingContact?.status;
+  const stableStatus = isBlockedOrRevokedStatus(existingStatus) ? existingStatus : "trusted";
   return store.upsertAgentContact({
     contactId: existingContact?.contactId,
     identityWallet: peer.walletAddress,
@@ -860,7 +891,7 @@ function resolveInviteContactDecision(
 ): InviteContactDecision {
   const contactStatus = contact?.status;
 
-  if (contactStatus === "blocked" || contactStatus === "revoked") {
+  if (isBlockedOrRevokedStatus(contactStatus)) {
     return {
       status: contactStatus,
       autoAccepted: false,
@@ -904,9 +935,21 @@ function persistBusinessCommandMessage(
     receivedAt: string;
     trustedSender: boolean;
     payment?: EncryptedEnvelopeV2Payment;
+    untrustedDecision?: UntrustedBusinessCommandDecision;
   },
 ): AgentMessage {
-  const paidPending = !input.trustedSender && input.payment !== undefined;
+  const defaultUntrustedDecision: UntrustedBusinessCommandDecision = input.payment
+    ? {
+        status: "paid_pending",
+        trustOutcome: "paid_pending",
+      }
+    : {
+        status: "rejected",
+        trustOutcome: "unknown_business_rejected",
+        error: `unknown business command rejected for untrusted sender: ${input.command.type}`,
+      };
+  const untrustedDecision = input.untrustedDecision ?? defaultUntrustedDecision;
+
   return persistInboundMessage(store, {
     peerId: input.peerId,
     txHash: input.txHash,
@@ -917,21 +960,103 @@ function persistBusinessCommandMessage(
     contactId: input.contactId,
     identityWallet: input.identityWallet,
     transportAddress: input.transportAddress,
-    trustOutcome: input.trustedSender
-      ? "trusted_sender"
-      : paidPending
-        ? "paid_pending"
-        : "unknown_business_rejected",
+    trustOutcome: input.trustedSender ? "trusted_sender" : untrustedDecision.trustOutcome,
     payment: input.payment,
     decryptedCommandType: input.command.type,
     ciphertext: input.ciphertext,
-    status: input.trustedSender ? "decrypted" : paidPending ? "paid_pending" : "rejected",
-    error: input.trustedSender || paidPending
-      ? undefined
-      : `unknown business command rejected for untrusted sender: ${input.command.type}`,
+    status: input.trustedSender ? "decrypted" : untrustedDecision.status,
+    error: input.trustedSender ? undefined : untrustedDecision.error,
     sentAt: input.sentAt,
     receivedAt: input.receivedAt,
   });
+}
+
+function resolveX402Mode(options: InboxProcessorOptions): X402Mode {
+  return options.config?.x402Mode ?? "disabled";
+}
+
+function rejectUnknownBusinessCommand(commandType: AgentCommand["type"]): UntrustedBusinessCommandDecision {
+  return {
+    status: "rejected",
+    trustOutcome: "unknown_business_rejected",
+    error: `unknown business command rejected for untrusted sender: ${commandType}`,
+  };
+}
+
+function rejectForX402Failure(error: string): UntrustedBusinessCommandDecision {
+  return {
+    status: "rejected",
+    trustOutcome: "x402_enforce_rejected",
+    error: `x402 validation failed (enforce): ${error}`,
+  };
+}
+
+function paidPendingObserveWithX402Error(error: string): UntrustedBusinessCommandDecision {
+  return {
+    status: "paid_pending",
+    trustOutcome: "paid_pending",
+    error: `x402 validation failed (observe): ${error}`,
+  };
+}
+
+function resolveX402FailureDecision(
+  mode: X402Mode,
+  error: string,
+): UntrustedBusinessCommandDecision {
+  if (mode === "enforce") {
+    return rejectForX402Failure(error);
+  }
+  return paidPendingObserveWithX402Error(error);
+}
+
+async function evaluateUntrustedBusinessCommandDecision(
+  options: InboxProcessorOptions,
+  input: {
+    commandType: AgentCommand["type"];
+    payment?: EncryptedEnvelopeV2Payment;
+    localPayee: Address;
+    occurredAt: string;
+  },
+): Promise<UntrustedBusinessCommandDecision> {
+  if (!input.payment) {
+    return rejectUnknownBusinessCommand(input.commandType);
+  }
+
+  const x402Mode = resolveX402Mode(options);
+  if (x402Mode === "disabled") {
+    return {
+      status: "paid_pending",
+      trustOutcome: "paid_pending",
+    };
+  }
+
+  if (!input.payment.proof) {
+    return resolveX402FailureDecision(x402Mode, "missing x402 proof");
+  }
+
+  const verification = await verifyX402Proof(
+    {
+      mode: x402Mode,
+      store: options.store,
+      localPayees: [input.localPayee],
+      expectedPayment: {
+        asset: input.payment.asset,
+        amount: input.payment.amount,
+      },
+      now: new Date(input.occurredAt),
+    },
+    input.payment.proof,
+  );
+
+  if (verification.valid) {
+    return {
+      status: "paid_pending",
+      trustOutcome: "paid_pending",
+    };
+  }
+
+  const reason = verification.error ?? "invalid x402 proof";
+  return resolveX402FailureDecision(x402Mode, reason);
 }
 
 function recordInboundConnectionEvent(
@@ -1038,7 +1163,7 @@ async function evaluateConnectionCommand(
       inviteDecision.status,
     );
 
-    if (inviteContact.status === "blocked" || inviteContact.status === "revoked") {
+    if (isBlockedOrRevokedStatus(inviteContact.status)) {
       return {
         messageStatus: "rejected",
         messageError: `connection invite ignored for ${inviteContact.status} contact`,
@@ -1091,7 +1216,7 @@ async function evaluateConnectionCommand(
     };
   }
 
-  if (resolvedContact.status === "blocked" || resolvedContact.status === "revoked") {
+  if (isBlockedOrRevokedStatus(resolvedContact.status)) {
     return {
       messageStatus: "rejected",
       messageError: `${command.type} rejected for ${resolvedContact.status} contact`,
@@ -1427,6 +1552,14 @@ async function processInboxV2(
 
   if (isBusinessCommandType(command.type)) {
     const trustedSender = resolvedContact?.status === "trusted";
+    const untrustedDecision = trustedSender
+      ? undefined
+      : await evaluateUntrustedBusinessCommandDecision(options, {
+          commandType: command.type,
+          payment: body.payment,
+          localPayee: keyRecipient,
+          occurredAt: event.timestamp,
+        });
     const message = persistBusinessCommandMessage(options.store, {
       peerId: resolveInboundMessagePeerId({
         contact: resolvedContact ?? undefined,
@@ -1445,6 +1578,7 @@ async function processInboxV2(
       receivedAt: event.timestamp,
       trustedSender,
       payment: body.payment,
+      untrustedDecision,
     });
     return { message, command };
   }

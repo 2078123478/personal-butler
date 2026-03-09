@@ -87,7 +87,7 @@ function readX402Mode(name: string, fallback: z.infer<typeof x402ModeSchema>) {
   if (!raw) {
     return fallback;
   }
-  return x402ModeSchema.parse(raw);
+  return x402ModeSchema.parse(raw.trim().toLowerCase());
 }
 
 export interface AlphaOsConfig {
@@ -153,6 +153,9 @@ export interface AlphaOsConfig {
   commArtifactExpiryWarningDays: number;
   commChainId: number;
   commRpcUrl?: string;
+  commRelayUrl?: string;
+  commRelayTimeoutMs: number;
+  commSubmitMode: z.infer<typeof commSubmitModeSchema>;
   commListenerMode: z.infer<typeof commListenerModeSchema>;
   commPollIntervalMs: number;
   commWalletAlias: string;
@@ -167,6 +170,9 @@ type AgentCommConfig = Pick<
   | "commArtifactExpiryWarningDays"
   | "commChainId"
   | "commRpcUrl"
+  | "commRelayUrl"
+  | "commRelayTimeoutMs"
+  | "commSubmitMode"
   | "commListenerMode"
   | "commPollIntervalMs"
   | "commWalletAlias"
@@ -176,6 +182,7 @@ type AgentCommConfig = Pick<
 const networkProfileIdSchema: z.ZodType<NetworkProfileId> = z.enum(networkProfileIds);
 const executionModeSchema: z.ZodType<ExecutionMode> = z.enum(["paper", "live"]);
 const onchainAuthModeSchema: z.ZodType<OnchainAuthMode> = z.enum(["bearer", "api-key", "hmac"]);
+const commSubmitModeSchema = z.enum(["direct", "relay"]);
 const riskPolicySchema: z.ZodType<RiskPolicy> = z
   .object({
     minNetEdgeBpsPaper: z.number().finite(),
@@ -250,6 +257,9 @@ export const alphaOsConfigSchema: z.ZodType<AlphaOsConfig> = z
     commArtifactExpiryWarningDays: z.number().int().nonnegative(),
     commChainId: z.number().int().positive(),
     commRpcUrl: z.string().optional(),
+    commRelayUrl: z.string().optional(),
+    commRelayTimeoutMs: z.number().int().positive(),
+    commSubmitMode: commSubmitModeSchema,
     commListenerMode: commListenerModeSchema,
     commPollIntervalMs: z.number().finite(),
     commWalletAlias: z.string().min(1),
@@ -278,6 +288,9 @@ function readAgentCommConfig(options: {
     ),
     commChainId: readNumber("COMM_CHAIN_ID", commChainIdFallback),
     commRpcUrl: process.env.COMM_RPC_URL ?? options.commRpcUrlDefault,
+    commRelayUrl: process.env.COMM_RELAY_URL,
+    commRelayTimeoutMs: Math.max(1, Math.floor(readNumber("COMM_RELAY_TIMEOUT_MS", 10_000))),
+    commSubmitMode: commSubmitModeSchema.parse((process.env.COMM_SUBMIT_MODE ?? "direct").trim().toLowerCase()),
     commListenerMode: readCommListenerMode(
       "COMM_LISTENER_MODE",
       options.commListenerModeDefault ?? "disabled",

@@ -76,13 +76,15 @@ function isBlockReceiptsUnsupported(error: unknown): boolean {
   if (!message.includes("eth_getblockreceipts")) {
     return false;
   }
-  return (
-    message.includes("method not found")
-    || message.includes("unsupported")
-    || message.includes("not available")
-    || message.includes("does not exist")
-    || message.includes("-32601")
-  );
+
+  const unsupportedSignals = [
+    "method not found",
+    "unsupported",
+    "not available",
+    "does not exist",
+    "-32601",
+  ];
+  return unsupportedSignals.some((signal) => message.includes(signal));
 }
 
 function normalizeStartBlockNumber(startBlockNumber: bigint | undefined): bigint | undefined {
@@ -176,6 +178,82 @@ export function startListener(
     options.onError?.(normalized);
   };
 
+  const updateCursor = (blockNumber: bigint): void => {
+    options.store.upsertListenerCursor({
+      address: targetAddress,
+      chainId: options.chainId,
+      cursor: blockNumber.toString(),
+    });
+  };
+
+  const emitRelevantTransaction = async (
+    transaction: Transaction,
+    timestamp: string,
+  ): Promise<void> => {
+    if (!isRelevantTransaction(transaction, targetAddress)) {
+      return;
+    }
+    await onTransaction(toTransactionEvent(transaction, timestamp));
+  };
+
+  const processBlockWithFullScan = async (blockNumber: bigint): Promise<void> => {
+    const block = await publicClient.getBlock({
+      blockNumber,
+      includeTransactions: true,
+    });
+    const timestamp = blockTimestampToIso(block.timestamp);
+
+    for (const transaction of block.transactions) {
+      await emitRelevantTransaction(transaction, timestamp);
+    }
+  };
+
+  const getBlockReceiptsForCatchUp = async (
+    blockNumber: bigint,
+  ): Promise<TransactionReceipt[] | null> => {
+    try {
+      const receipts = await publicClient.getBlockReceipts({ blockNumber });
+      blockReceiptSupport = "supported";
+      return receipts;
+    } catch (error) {
+      if (!isBlockReceiptsUnsupported(error)) {
+        throw error;
+      }
+      blockReceiptSupport = "unsupported";
+      return null;
+    }
+  };
+
+  const processBlockWithReceipts = async (blockNumber: bigint): Promise<boolean> => {
+    if (blockReceiptSupport === "unsupported") {
+      return false;
+    }
+
+    const receipts = await getBlockReceiptsForCatchUp(blockNumber);
+    if (receipts === null) {
+      return false;
+    }
+
+    const matchingReceipts = receipts
+      .filter((receipt) => sameAddress(receipt.to, targetAddress))
+      .sort(sortReceiptsByTransactionIndex);
+    if (matchingReceipts.length === 0) {
+      return true;
+    }
+
+    const block = await publicClient.getBlock({ blockNumber });
+    const timestamp = blockTimestampToIso(block.timestamp);
+
+    for (const receipt of matchingReceipts) {
+      const transaction = await publicClient.getTransaction({
+        hash: receipt.transactionHash,
+      });
+      await emitRelevantTransaction(transaction, timestamp);
+    }
+
+    return true;
+  };
+
   const scheduleNext = (): void => {
     if (stopped) {
       return;
@@ -210,7 +288,7 @@ export function startListener(
       if (nextBlockNumber > latestBlockNumber) {
         return;
       }
-      const useReceiptCatchUp =
+      const shouldUseReceiptCatchUp =
         latestBlockNumber - nextBlockNumber >= CATCH_UP_BACKLOG_THRESHOLD;
 
       for (
@@ -218,67 +296,16 @@ export function startListener(
         blockNumber <= latestBlockNumber && !stopped;
         blockNumber += 1n
       ) {
-        if (useReceiptCatchUp && blockReceiptSupport !== "unsupported") {
-          let receipts: TransactionReceipt[];
-          try {
-            receipts = await publicClient.getBlockReceipts({ blockNumber });
-            blockReceiptSupport = "supported";
-          } catch (error) {
-            if (!isBlockReceiptsUnsupported(error)) {
-              throw error;
-            }
-            blockReceiptSupport = "unsupported";
-            receipts = [];
-          }
-
-          if (blockReceiptSupport === "supported") {
-            const matchingReceipts = receipts
-              .filter((receipt) => sameAddress(receipt.to, targetAddress))
-              .sort(sortReceiptsByTransactionIndex);
-
-            if (matchingReceipts.length > 0) {
-              const block = await publicClient.getBlock({ blockNumber });
-              const timestamp = blockTimestampToIso(block.timestamp);
-
-              for (const receipt of matchingReceipts) {
-                const transaction = await publicClient.getTransaction({
-                  hash: receipt.transactionHash,
-                });
-                if (!isRelevantTransaction(transaction, targetAddress)) {
-                  continue;
-                }
-                await onTransaction(toTransactionEvent(transaction, timestamp));
-              }
-            }
-
-            options.store.upsertListenerCursor({
-              address: targetAddress,
-              chainId: options.chainId,
-              cursor: blockNumber.toString(),
-            });
-            continue;
-          }
+        let handledByReceipts = false;
+        if (shouldUseReceiptCatchUp) {
+          handledByReceipts = await processBlockWithReceipts(blockNumber);
         }
 
-        const block = await publicClient.getBlock({
-          blockNumber,
-          includeTransactions: true,
-        });
-        const timestamp = blockTimestampToIso(block.timestamp);
-
-        for (const transaction of block.transactions) {
-          if (!isRelevantTransaction(transaction, targetAddress)) {
-            continue;
-          }
-
-          await onTransaction(toTransactionEvent(transaction, timestamp));
+        if (!handledByReceipts) {
+          await processBlockWithFullScan(blockNumber);
         }
 
-        options.store.upsertListenerCursor({
-          address: targetAddress,
-          chainId: options.chainId,
-          cursor: blockNumber.toString(),
-        });
+        updateCursor(blockNumber);
       }
     } catch (error) {
       if (error instanceof ChainIdMismatchError) {

@@ -1,12 +1,17 @@
 import type { StateStore } from "../state-store";
 import type { DiscoveryEngine } from "../discovery/discovery-engine";
 import type { OnchainOsClient } from "../onchainos-client";
+import type { EngineModeResponse, ExecutionMode } from "../../types";
 import type { AgentCommand } from "./types";
+
+export interface TaskRouterEngine {
+  requestMode(mode: ExecutionMode): EngineModeResponse;
+}
 
 export interface TaskRouterOptions {
   discovery: DiscoveryEngine;
-  // TODO(agent-comm): wire onchain probing/execution commands through this router.
-  onchain: OnchainOsClient;
+  onchain: Pick<OnchainOsClient, "probeConnection">;
+  engine: TaskRouterEngine;
   store: StateStore;
 }
 
@@ -63,12 +68,30 @@ export async function routeCommand(
         return { success: true, result };
       }
 
-      case "probe_onchainos":
-      case "request_mode_change":
+      case "probe_onchainos": {
+        const payload = command.payload;
+        const result = await options.onchain.probeConnection({
+          pair: payload.pair,
+          chainIndex: payload.chainIndex,
+          notionalUsd: payload.notionalUsd,
+        });
+        return { success: true, result };
+      }
+
+      case "request_mode_change": {
+        const payload = command.payload;
+        const result = options.engine.requestMode(payload.requestedMode);
+        if (result.ok) {
+          return { success: true, result };
+        }
         return {
           success: false,
-          error: `command reserved for future version: ${command.type}`,
+          result,
+          error:
+            result.reasons.join("; ")
+            || `mode change rejected: requested=${payload.requestedMode} current=${result.currentMode}`,
         };
+      }
 
       default:
         return {
