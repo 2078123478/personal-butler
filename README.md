@@ -129,6 +129,7 @@ VAULT_MASTER_PASSWORD=pass123 npm run dev -- vault:get trader-key
 ## Agent-Comm
 
 **Quick Start:**
+- 🧭 **One Pager**: `docs/AGENT_COMM_ONE_PAGER.md` — Human-friendly story + OpenClaw-first flow
 - 🚀 **Production Deployment Guide**: `docs/AGENT_COMM_PRODUCTION_DEPLOYMENT.md` — Battle-tested 6-step deployment
 - 💡 **Revolutionary Design**: `docs/AGENT_COMM_REVOLUTIONARY_DESIGN.md` — Why this protocol matters
 - 🔔 **Webhook Notification (Optional)**: `docs/AGENT_COMM_PRODUCTION_DEPLOYMENT.md#webhook-notification-optional` — Wake OpenClaw or any webhook-compatible orchestrator on inbound messages
