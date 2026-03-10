@@ -239,7 +239,7 @@ export function getAgentCommHelpText(): string {
     "  agent-comm:wallet:init-demo",
     "  agent-comm:wallet:rotate",
     "  agent-comm:identity",
-    "  agent-comm:card:export [--display-name <name>] [--output <file>]",
+    "  agent-comm:card:export [--display-name <name>] [--output <file>] [--html]",
     "  agent-comm:card:import <file|raw-json|share-url>",
     "  agent-comm:artifact:revoke <artifactDigest> --artifact-type <ContactCard|TransportBinding>",
     "  agent-comm:artifact:import-revocation <file|raw-json>",
@@ -457,7 +457,12 @@ export async function run(): Promise<void> {
 
       const outputPath = output ? path.resolve(output) : undefined;
       if (outputPath) {
-        fs.writeFileSync(outputPath, `${JSON.stringify(result.bundle, null, 2)}\n`);
+        if (parsed.flags.get("html")) {
+          const { generateCardHtml } = await import("./skills/alphaos/runtime/agent-comm/card-html");
+          fs.writeFileSync(outputPath, generateCardHtml(result.bundle));
+        } else {
+          fs.writeFileSync(outputPath, `${JSON.stringify(result.bundle, null, 2)}\n`);
+        }
       }
 
       writeJson({
