@@ -127,6 +127,12 @@ VAULT_MASTER_PASSWORD=pass123 npm run dev -- vault:get trader-key
 ```
 
 ## Agent-Comm
+
+**Quick Start:**
+- 🚀 **Production Deployment Guide**: `docs/AGENT_COMM_PRODUCTION_DEPLOYMENT.md` — Battle-tested 6-step deployment
+- 💡 **Revolutionary Design**: `docs/AGENT_COMM_REVOLUTIONARY_DESIGN.md` — Why this protocol matters
+
+**Protocol Documentation:**
 - v2 协议草案（架构评审版）：`docs/AGENT_COMM_PROTOCOL_V2_DRAFT.md`，包含签名标准推荐、陌生人建联/冷启动消息策略、direct-tx 隐私边界
 - v2 正式设计文档（草案之后、实现拆解之前）：`docs/AGENT_COMM_V2_DESIGN.md`
 - v2 身份工件 typed-data 冻结：`docs/AGENT_COMM_V2_ARTIFACT_CONTRACTS.md`
