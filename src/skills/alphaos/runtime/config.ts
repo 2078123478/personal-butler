@@ -160,6 +160,8 @@ export interface AlphaOsConfig {
   commPollIntervalMs: number;
   commWalletAlias: string;
   commPaymasterUrl?: string;
+  commWebhookUrl?: string;
+  commWebhookToken?: string;
   x402Mode: z.infer<typeof x402ModeSchema>;
 }
 
@@ -177,6 +179,8 @@ type AgentCommConfig = Pick<
   | "commPollIntervalMs"
   | "commWalletAlias"
   | "commPaymasterUrl"
+  | "commWebhookUrl"
+  | "commWebhookToken"
 >;
 
 const networkProfileIdSchema: z.ZodType<NetworkProfileId> = z.enum(networkProfileIds);
@@ -264,6 +268,8 @@ export const alphaOsConfigSchema: z.ZodType<AlphaOsConfig> = z
     commPollIntervalMs: z.number().finite(),
     commWalletAlias: z.string().min(1),
     commPaymasterUrl: z.string().optional(),
+    commWebhookUrl: z.string().optional(),
+    commWebhookToken: z.string().optional(),
     x402Mode: x402ModeSchema,
   })
   .strict();
@@ -298,6 +304,8 @@ function readAgentCommConfig(options: {
     commPollIntervalMs: readNumber("COMM_POLL_INTERVAL_MS", 5000),
     commWalletAlias: process.env.COMM_WALLET_ALIAS ?? "agent-comm",
     commPaymasterUrl: process.env.COMM_PAYMASTER_URL,
+    commWebhookUrl: process.env.COMM_WEBHOOK_URL,
+    commWebhookToken: process.env.COMM_WEBHOOK_TOKEN,
   };
 }
 

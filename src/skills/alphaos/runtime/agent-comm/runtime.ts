@@ -241,6 +241,22 @@ function createTransactionHandler(
     x402Mode: options.config.x402Mode,
   };
 
+  const webhookUrl = options.config.commWebhookUrl?.trim();
+  const webhookToken = options.config.commWebhookToken?.trim();
+
+  const notifyWebhook = (result: ProcessInboxResult, event: TransactionEvent): void => {
+    if (!webhookUrl) return;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (webhookToken) {
+      headers["Authorization"] = `Bearer ${webhookToken}`;
+    }
+    const body = JSON.stringify({
+      text: `[agent-comm] Inbound ${result.command.type} from ${event.from} (tx: ${event.txHash.slice(0, 10)}…)`,
+      mode: "now",
+    });
+    fetch(webhookUrl, { method: "POST", headers, body }).catch(() => {});
+  };
+
   return async (event: TransactionEvent): Promise<void> => {
     try {
       const result = await processInbox(
@@ -255,6 +271,7 @@ function createTransactionHandler(
       );
 
       await executeInboundMessage(options, result);
+      notifyWebhook(result, event);
     } catch (error) {
       if (error instanceof InboxProcessingError) {
         setRuntimeError(error.code, error.message, error.details);

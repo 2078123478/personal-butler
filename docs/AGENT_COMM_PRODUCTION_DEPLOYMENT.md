@@ -56,6 +56,9 @@ COMM_POLL_INTERVAL_MS=3000
 LOG_LEVEL=info
 AGENT_COMM_PRIVATE_KEY=<your-private-key-or-leave-empty-to-generate>
 PORT=3001
+# Optional: webhook notification on inbound messages
+# COMM_WEBHOOK_URL=http://127.0.0.1:18789/hooks/wake
+# COMM_WEBHOOK_TOKEN=your-webhook-secret
 ```
 
 ### Agent B
@@ -72,9 +75,64 @@ COMM_POLL_INTERVAL_MS=3000
 LOG_LEVEL=info
 AGENT_COMM_PRIVATE_KEY=<your-private-key-or-leave-empty-to-generate>
 PORT=3002
+# Optional: webhook notification on inbound messages
+# COMM_WEBHOOK_URL=http://127.0.0.1:18789/hooks/wake
+# COMM_WEBHOOK_TOKEN=your-webhook-secret
 ```
 
 **Security note**: Use different `VAULT_MASTER_PASSWORD` for A and B.
+
+### Webhook Notification (Optional)
+
+Agent-Comm can notify an external system (e.g., OpenClaw, Slack, or any webhook endpoint) whenever an inbound message is received and processed. This is useful for:
+
+- Triggering an AI agent heartbeat on new messages
+- Sending alerts to a chat channel
+- Integrating with automation pipelines
+
+Add these environment variables to your `.env` file:
+
+```bash
+# Webhook URL to POST when an inbound message is processed
+COMM_WEBHOOK_URL=http://127.0.0.1:18789/hooks/wake
+
+# Bearer token for webhook authentication (optional, depends on endpoint)
+COMM_WEBHOOK_TOKEN=your-webhook-secret
+```
+
+When a message is received, the runtime sends a fire-and-forget POST:
+
+```json
+{
+  "text": "[agent-comm] Inbound ping from 0x7b2c...5A4 (tx: 0xac3f5a26…)",
+  "mode": "now"
+}
+```
+
+The request includes `Authorization: Bearer <token>` if `COMM_WEBHOOK_TOKEN` is set.
+
+#### OpenClaw Integration Example
+
+If you run [OpenClaw](https://github.com/openclaw/openclaw), enable its webhook endpoint:
+
+```json5
+// ~/.openclaw/openclaw.json
+{
+  hooks: {
+    enabled: true,
+    token: "your-webhook-secret"
+  }
+}
+```
+
+Then set in your agent-comm env:
+
+```bash
+COMM_WEBHOOK_URL=http://localhost:18789/hooks/wake
+COMM_WEBHOOK_TOKEN=your-webhook-secret
+```
+
+This triggers an immediate OpenClaw heartbeat whenever an on-chain message arrives, so your AI agent can react in real time.
 
 ## Step 2: Initialize Wallets
 

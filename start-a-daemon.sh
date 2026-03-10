@@ -13,6 +13,10 @@ export LOG_LEVEL=info
 export AGENT_COMM_PRIVATE_KEY=0x0f2dc585d9cfef6c722ab4d0d5a41764814e6ae7d25fcf86d7ffc362ce7c4ecd
 export PORT=3001
 
+# Optional: webhook notification on inbound messages (e.g., OpenClaw)
+# export COMM_WEBHOOK_URL=http://127.0.0.1:18789/hooks/wake
+# export COMM_WEBHOOK_TOKEN=your-webhook-secret
+
 exec node --require ./node_modules/tsx/dist/preflight.cjs \
   --import "file://$(pwd)/node_modules/tsx/dist/loader.mjs" \
   src/index.ts
