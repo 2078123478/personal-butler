@@ -1,15 +1,17 @@
-# OnchainOS
+# AlphaOS
 
-A skill-oriented framework for autonomous agents on EVM chains. The core primitive is **Agent-Comm** — a contact-first, blockchain-native messaging protocol that gives every agent a wallet-based identity, consent-gated connections, and end-to-end encrypted on-chain communication.
+A skill-oriented autonomous agent framework built on the [OnchainOS](https://www.okx.com/zh-hans/web3/build/docs/waas/onchainos-overview) ecosystem. The core primitive is **Agent-Comm** — a contact-first, blockchain-native messaging protocol that gives every agent a wallet-based identity, consent-gated connections, and end-to-end encrypted on-chain communication.
 
-## Agent-Comm
+Built for X Layer. Runs on any EVM chain.
+
+## Agent-Comm — Core Protocol
 
 Agents need their own communication layer — with identity, trust, privacy, and on-chain verifiability. Agent-Comm is that layer.
 
 - **Wallet = Identity** — Every agent holds a secp256k1 keypair. EIP-712 signed contact cards prove identity without infrastructure.
 - **Consent-gated trust** — Importing a card doesn't auto-connect. The peer requests; you approve or reject. No spam.
-- **Encrypted inscription transport** — Messages are encrypted (ECDH + AES-256-GCM) and written into transaction calldata. No servers, no brokers, no contracts to deploy.
-- **Chain-agnostic** — Runs on any EVM chain. First deployed on X Layer.
+- **Encrypted inscription transport** — Messages are encrypted (ECDH + AES-256-GCM) and written into transaction calldata on-chain. No servers, no brokers, no contracts to deploy.
+- **Chain-agnostic** — Works on any EVM chain. First deployed on X Layer (Chain 196).
 
 ![Agent-Comm Contact Card](docs/assets/agent-comm-card-preview.png)
 
@@ -43,7 +45,7 @@ Export card → Peer imports → Peer sends invite → You approve → Mutual tr
 | Command | Purpose |
 |---------|---------|
 | `ping` | Liveness check |
-| `probe_onchainos` | Query execution readiness |
+| `probe_onchainos` | Query peer's OnchainOS execution readiness |
 | `start_discovery` | Request opportunity scanning |
 | `request_mode_change` | Request paper↔live switch |
 
@@ -63,7 +65,7 @@ Full CLI reference: `npx tsx src/index.ts agent-comm:help`
 
 ## Skill Architecture
 
-OnchainOS organizes capabilities as composable skills. Each skill has a self-contained definition (`SKILL.md`) with triggers, operations, and extension points.
+AlphaOS organizes capabilities as composable skills. Each skill has a self-contained definition (`SKILL.md`) with triggers, operations, and extension points.
 
 ```
 skills/
@@ -76,9 +78,9 @@ Skills share runtime infrastructure (SQLite state store, vault, config) but main
 
 ---
 
-## AlphaOS (Arbitrage Skill)
+## Arbitrage Engine (alphaos skill)
 
-The first skill built on Agent-Comm. A plugin-based DEX arbitrage engine with full risk gating.
+A plugin-based DEX arbitrage engine that leverages OnchainOS v6 execution infrastructure for on-chain trading.
 
 **Core flow:** `scan → evaluate → plan → simulate → execute → record → notify`
 
@@ -94,9 +96,18 @@ Paper trading on X Layer (Chain 196), March 4–10, 2026:
 | Mode | Behavior |
 |------|----------|
 | `paper` | Virtual execution, full PnL tracking |
-| `live` | Real OnchainOS v6 execution (quote → swap → simulate → broadcast) |
+| `live` | Real execution via OnchainOS v6 (quote → swap → simulate → broadcast) |
 
 Live promotion requires 24h paper track record: net profit > 0, win rate ≥ 55%, zero permission failures.
+
+### OnchainOS Integration
+
+AlphaOS integrates with [OnchainOS](https://www.okx.com/zh-hans/web3/build/docs/waas/onchainos-overview) as its execution infrastructure layer:
+
+- Official v6 execution flow: `quote → swap → simulate → broadcast → history`
+- Token resolution and chain indexing via OnchainOS API
+- Execution readiness probing: `POST /api/v1/integration/onchainos/probe`
+- Auth modes: `bearer`, `api-key`, `hmac`
 
 ### Run
 
@@ -115,7 +126,7 @@ npm run demo:smoke:live     # OnchainOS v6 integration smoke test
 
 ---
 
-## Discovery (Scanning Skill)
+## Discovery Engine (discovery skill)
 
 Time-bounded market scanning sessions with three pluggable strategies:
 
