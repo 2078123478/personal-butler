@@ -2,6 +2,16 @@
 
 AlphaOS is implemented as a reusable skill runtime, not a loose set of services.
 
+## Performance
+
+Paper trading results on X Layer (Chain 196), March 4–10, 2026:
+
+- **305 trades** executed, **100% win rate**, **$895.94 net profit**
+- 1,661 opportunities scanned across DEX pairs
+- Peak day: Mar 10 — 294 trades, $870.77 net profit
+
+![AlphaOS Paper Trading Performance](docs/assets/pnl-performance.png)
+
 ## Product Highlights
 
 Beyond the core arbitrage engine and Agent-Comm protocol, AlphaOS ships a set of product-level touches designed for real-world operator experience and organic distribution.
