@@ -1,5 +1,6 @@
 import type { AgentCommSignedIdentityArtifactBundle } from "./artifact-workflow";
 import { buildIdentityArtifactBundleShareUrl } from "./card-packaging";
+import QRCode from "qrcode";
 
 const CHAIN_NAMES: Record<number, string> = {
   1: "Ethereum",
@@ -21,7 +22,7 @@ function chainLabel(chainId: number): string {
   return name ? `${name} (${chainId})` : `Chain ${chainId}`;
 }
 
-export function generateCardHtml(bundle: AgentCommSignedIdentityArtifactBundle): string {
+export async function generateCardHtml(bundle: AgentCommSignedIdentityArtifactBundle): Promise<string> {
   const card = bundle.contactCard;
   const displayName = card.displayName || "Agent";
   const identity = shortenAddress(card.identityWallet);
@@ -29,6 +30,14 @@ export function generateCardHtml(bundle: AgentCommSignedIdentityArtifactBundle):
   const capabilities = card.defaults?.capabilities ?? [];
   const shareUrl = buildIdentityArtifactBundleShareUrl(bundle);
   const bundleJson = JSON.stringify(bundle);
+
+  // Generate QR code as data URL server-side
+  const qrDataUrl = await QRCode.toDataURL(shareUrl, {
+    errorCorrectionLevel: "L",
+    width: 400,
+    margin: 4,
+    color: { dark: "#000000", light: "#ffffff" },
+  });
 
   const capTags = capabilities
     .map((c: string) => `<span class="cap-tag">${escapeHtml(c)}</span>`)
@@ -59,7 +68,7 @@ body{min-height:100vh;display:flex;align-items:center;justify-content:center;bac
 .cap-tag{font-size:12px;font-weight:500;color:rgba(255,255,255,0.7);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:5px 12px;letter-spacing:0.2px}
 .qr-section{display:flex;align-items:center;gap:20px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:14px;padding:20px}
 .qr-box{width:120px;height:120px;background:#fff;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden}
-.qr-box canvas{width:112px!important;height:112px!important}
+.qr-box img{width:160px;height:160px;border-radius:6px}
 .qr-text{flex:1}
 .qr-title{font-size:13px;font-weight:600;color:rgba(255,255,255,0.8);margin-bottom:6px}
 .qr-desc{font-size:11.5px;color:rgba(255,255,255,0.35);line-height:1.5}
@@ -100,7 +109,7 @@ body{min-height:100vh;display:flex;align-items:center;justify-content:center;bac
   </div>
   ${capabilities.length > 0 ? `<div class="capabilities">\n    ${capTags}\n  </div>` : ""}
   <div class="qr-section">
-    <div class="qr-box"><canvas id="qr"></canvas></div>
+    <div class="qr-box"><img id="qr" src="${qrDataUrl}" alt="QR Code" style="width:160px;height:160px;image-rendering:pixelated;border-radius:6px"/></div>
     <div class="qr-text">
       <div class="qr-title">Scan to Connect</div>
       <div class="qr-desc">Import this card and send a connection request. The agent owner will review and approve.</div>
@@ -121,8 +130,6 @@ body{min-height:100vh;display:flex;align-items:center;justify-content:center;bac
 </div>
 <script>
 var SHARE_URL=${JSON.stringify(shareUrl)};
-!function(){"use strict";var t={Ecc:{LOW:0,MEDIUM:1,QUARTILE:2,HIGH:3}};t.encode=function(r,e){e=e||t.Ecc.MEDIUM;for(var n=[],o=0;o<r.length;o++){var a=r.charCodeAt(o);a<128?n.push(a):a<2048?(n.push(192|a>>6),n.push(128|63&a)):a<65536?(n.push(224|a>>12),n.push(128|a>>6&63),n.push(128|63&a)):(n.push(240|a>>18),n.push(128|a>>12&63),n.push(128|a>>6&63),n.push(128|63&a))}return t._encode(n,e)};t._encode=function(r,e){for(var n,o=1;o<=40;o++){n=t._getNumDataCodewords(o,e)*8;var a=4+t._numCharCountBits(o);if(8*r.length<=n-a-4){n=o;break}}if(n>40)throw"Data too long";for(var i=[],l=0;l<4;l++)i.push(0);var s=t._numCharCountBits(n);for(l=s-1;l>=0;l--)i.push(r.length>>l&1);for(l=0;l<r.length;l++)for(var c=7;c>=0;c--)i.push(r[l]>>c&1);var u=t._getNumDataCodewords(n,e)*8;for(;i.length<u;)i.push(0);for(;i.length%8!=0;)i.push(0);for(var f=[236,17],d=0;i.length<u;d++)for(l=7;l>=0;l--)i.push(f[d%2]>>l&1);for(var h=[],g=0;g<i.length;g+=8){for(var p=0,v=0;v<8;v++)p=p<<1|i[g+v];h.push(p)}return t._generate(n,e,h)};t._generate=function(r,e,n){var o=t._getNumRawDataModules(r)/8-t._getNumDataCodewords(r,e),a=t._reedSolomonComputeDivisor(o),i=t._getNumBlocks(r,e),l=t._getNumDataCodewords(r,e),s=Math.floor(l/i),c=l%i,u=[],f=0;for(var d=0;d<i;d++){var h=n.slice(f,f+(d<i-c?s:s+1));f+=h.length;var g=t._reedSolomonComputeRemainder(h,a);u.push(h.concat(g))}for(var p=u[i-1].length,v=[],m=0;m<p;m++)for(d=0;d<i;d++)(m<u[d].length-(m>=s+1?0:o))&&v.push(u[d][m<s+1?m:m-(p-u[d].length)]);for(m=0;m<p;m++)for(d=0;d<i;d++)m>=u[d].length-o&&v.push(u[d][u[d].length-o+m-(m>=u[d].length-o?0:0)]);var w=[];for(d=0;d<i;d++){h=u[d];for(m=0;m<h.length-o;m++)w.push(h[m])}for(d=0;d<i;d++){h=u[d];for(m=h.length-o;m<h.length;m++)w.push(h[m])}var b=4*r+17,y=[];for(m=0;m<b;m++){y.push([]);for(d=0;d<b;d++)y[m].push(null)}t._drawFunctionPatterns(y,r);for(var x=0,k=0;k<w.length;k++)for(var _=b-1;_>=1;_-=2){6==_&&_--;for(var C=0==((_+1)/2&1)?b-1:0,E=0;E<b;E++){var j=0==((_+1)/2&1)?C-E:C+E;null==y[j][_]&&(y[j][_]=!!(w[x>>3]>>(7-(7&x))&1),x++);null==y[j][_-1]&&(y[j][_-1]=!!(w[x>>3]>>(7-(7&x))&1),x++)}}var A=t._applyMask(y,r,e);return A};t._drawFunctionPatterns=function(r,e){var n=r.length;t._drawFinderPattern(r,3,3);t._drawFinderPattern(r,n-4,3);t._drawFinderPattern(r,3,n-4);for(var o=t._getAlignmentPatternPositions(e),a=0;a<o.length;a++)for(var i=0;i<o.length;i++){if(0==a&&0==i||0==a&&i==o.length-1||a==o.length-1&&0==i)continue;t._drawAlignmentPattern(r,o[a],o[i])}for(a=0;a<n;a++)null==r[a][6]&&(r[a][6]=a%2==0),null==r[6][a]&&(r[6][a]=a%2==0);r[n-8][8]=!0};t._drawFinderPattern=function(r,e,n){for(var o=-4;o<=4;o++)for(var a=-4;a<=4;a++){var i=Math.max(Math.abs(a),Math.abs(o)),l=e+o,s=n+a;l>=0&&l<r.length&&s>=0&&s<r.length&&(r[l][s]=2!=i&&4!=i)}};t._drawAlignmentPattern=function(r,e,n){for(var o=-2;o<=2;o++)for(var a=-2;a<=2;a++)r[e+o][n+a]=1!=Math.max(Math.abs(a),Math.abs(o))};t._applyMask=function(r,e,n){for(var o=r.length,a=null,i=1/0,l=0;l<8;l++){var s=r.map(function(r){return r.slice()});t._applyMaskPattern(s,l);t._drawFormatBits(s,n,l);var c=t._getPenaltyScore(s);c<i&&(i=c,a=s)}return a};t._applyMaskPattern=function(r,e){for(var n=r.length,o=0;o<n;o++)for(var a=0;a<n;a++)null!==r[o][a]&&!0!==r[o][a]&&!1!==r[o][a]||(null===r[o][a]||t._isFunctionModule(r,o,a)||(r[o][a]=r[o][a]^t._getMaskBit(e,o,a)))};t._isFunctionModule=function(){return!1};t._getMaskBit=function(r,e,n){switch(r){case 0:return(e+n)%2==0;case 1:return e%2==0;case 2:return n%3==0;case 3:return(e+n)%3==0;case 4:return(Math.floor(e/2)+Math.floor(n/3))%2==0;case 5:return e*n%2+e*n%3==0;case 6:return(e*n%2+e*n%3)%2==0;case 7:return((e+n)%2+e*n%3)%2==0}};t._drawFormatBits=function(r,e,n){for(var o=r.length,a=[1,0,1,0,1][e]<<3|n,i=a,l=0;l<10;l++)i=i<<1^(i>>9)*1335;var s=21522^(a<<10|i);for(l=0;l<=5;l++)r[8][l]=!!(s>>l&1);r[8][7]=!!(s>>6&1);r[8][8]=!!(s>>7&1);r[7][8]=!!(s>>8&1);for(l=9;l<15;l++)r[14-l][8]=!!(s>>l&1);for(l=0;l<8;l++)r[o-1-l][8]=!!(s>>l&1);for(l=8;l<15;l++)r[8][o-15+l]=!!(s>>l&1)};t._getPenaltyScore=function(r){for(var e=r.length,n=0,o=0;o<e;o++)for(var a=0;a<e;a++){for(var i=0,l=1;l<e-o;l++){if(r[o+l][a]!==r[o][a])break;i++}i>=4&&(n+=3+i-4);for(i=0,l=1;l<e-a;l++){if(r[o][a+l]!==r[o][a])break;i++}i>=4&&(n+=3+i-4)}for(o=0;o<e-1;o++)for(a=0;a<e-1;a++){var s=r[o][a];s==r[o+1][a]&&s==r[o][a+1]&&s==r[o+1][a+1]&&(n+=3)}var c=0;for(o=0;o<e;o++)for(a=0;a<e;a++)r[o][a]&&c++;var u=e*e;return n+=10*Math.floor(Math.abs(20*c-10*u)/u)};t._getAlignmentPatternPositions=function(r){if(1==r)return[];for(var e=Math.floor(r/7)+2,n=32==r?26:2*Math.ceil((4*r+4)/(2*e-2)),o=[6],a=4*r+10;o.length<e;)o.splice(1,0,a-=n);return o};t._getNumRawDataModules=function(r){var e=(4*r+17)*(4*r+17);return e-=192,r>=2&&(e-=25*(Math.floor(r/7)+2-1)*(Math.floor(r/7)+2-1)-10*(2*(Math.floor(r/7)+2-1))),e-=r>=7?36:0,e-=31,e};t._getNumDataCodewords=function(r,e){return Math.floor(t._getNumRawDataModules(r)/8)-t._ECC_CODEWORDS_PER_BLOCK[e][r]*t._NUM_ERROR_CORRECTION_BLOCKS[e][r]};t._getNumBlocks=function(r,e){return t._NUM_ERROR_CORRECTION_BLOCKS[e][r]};t._numCharCountBits=function(r){return r<=9?8:r<=26?16:16};t._reedSolomonComputeDivisor=function(r){for(var e=[],n=0;n<r-1;n++)e.push(0);e.push(1);for(var o=1,a=0;a<r;a++){for(n=0;n<e.length;n++)e[n]=t._reedSolomonMultiply(e[n],o),n+1<e.length&&(e[n]^=e[n+1]);o=t._reedSolomonMultiply(o,2)}return e};t._reedSolomonComputeRemainder=function(r,e){for(var n=e.map(function(){return 0}),o=0;o<r.length;o++){var a=r[o]^n.shift();n.push(0);for(var i=0;i<e.length;i++)n[i]^=t._reedSolomonMultiply(e[i],a)}return n};t._reedSolomonMultiply=function(r,e){for(var n=0,o=7;o>=0;o--)n=n<<1^(n>>7)*285,n^=(e>>o&1)*r;return n};t._ECC_CODEWORDS_PER_BLOCK=[[-1,7,10,15,20,26,18,20,24,30,18,20,24,26,30,22,24,28,30,28,28,28,28,30,30,26,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30],[-1,10,16,26,18,24,16,18,22,22,26,30,22,22,24,24,28,28,26,26,26,26,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28],[-1,13,22,18,26,18,24,18,22,20,24,28,26,24,20,30,24,28,28,26,30,28,30,30,30,30,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30],[-1,17,28,22,16,22,28,26,26,24,28,24,28,22,24,24,30,28,28,26,28,30,24,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30]];t._NUM_ERROR_CORRECTION_BLOCKS=[[-1,1,1,1,1,1,2,2,2,2,4,4,4,4,4,6,6,6,6,7,8,8,9,9,10,12,12,12,13,14,15,16,17,18,19,19,20,21,22,24,25],[-1,1,1,1,2,2,4,4,4,5,5,5,8,9,9,10,10,11,13,14,16,17,17,18,20,21,23,25,26,28,29,31,33,35,37,38,40,43,45,47,49],[-1,1,1,2,2,4,4,6,6,8,8,8,10,12,16,12,17,16,18,21,20,23,23,25,27,29,34,34,35,38,40,43,45,48,51,53,56,59,62,65,68],[-1,1,1,2,4,4,4,5,6,8,8,11,11,16,16,18,16,19,21,25,25,25,34,30,32,35,37,40,42,45,48,51,54,57,60,63,66,70,74,77,81]];window.QR=t}();
-try{var m=QR.encode(SHARE_URL,QR.Ecc.LOW);var c=document.getElementById('qr');var sz=m.length;var sc=Math.floor(112/sz);c.width=sz*sc;c.height=sz*sc;var cx=c.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,c.width,c.height);cx.fillStyle='#0a0a0e';for(var y=0;y<sz;y++)for(var x=0;x<sz;x++)if(m[y][x])cx.fillRect(x*sc,y*sc,sc,sc)}catch(e){var c=document.getElementById('qr');c.width=112;c.height=112;var cx=c.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,112,112);cx.fillStyle='#ccc';cx.font='11px sans-serif';cx.textAlign='center';cx.fillText('QR Code',56,52);cx.fillText('(use CLI)',56,68)}
 function copyUrl(){navigator.clipboard.writeText(SHARE_URL).then(function(){var b=document.querySelector('.qr-copy');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy Import URL'},1500)})}
 </script>
 </body>

@@ -173,6 +173,32 @@ VAULT_MASTER_PASSWORD=pass123 npm run dev -- vault:get trader-key
 
 ## Agent-Comm
 
+> **Agent-Comm is not a chat protocol. It's a decentralized social infrastructure for AI agents.**
+
+Humans have WeChat, Telegram, Signal. Agents need their own communication layer — with identity, trust, privacy, and on-chain verifiability. Agent-Comm is that layer.
+
+### Why This Matters
+
+Every AI agent today lives in a silo. They call APIs, but they don't *know* each other. Agent-Comm changes that:
+
+- **On-chain identity** — Every agent has a wallet-based identity. Cryptographically signed, unforgeable, portable across any EVM chain.
+- **Consent-gated connections** — No spam. Importing a contact card doesn't auto-trust. The peer requests a connection; the owner approves or rejects. Like a friend request, but with cryptographic proof.
+- **Encrypted P2P messaging** — Direct on-chain transactions carry encrypted payloads. No central server. No middleman. No single point of failure.
+- **Trust network** — Agents build a web of trust over time. Approve, reject, revoke, rotate keys. The social graph is theirs to control.
+- **Chain-agnostic** — The protocol runs on any EVM chain. Today X Layer, tomorrow Ethereum, Base, Arbitrum — no per-chain contract deployments needed.
+
+### Real-World Scenarios
+
+🔍 **Collaborative Discovery** — Agent A discovers a promising opportunity → broadcasts an encrypted invite to trusted peers → multiple agents split the workload across chains and DEXes, sharing findings in real time.
+
+💰 **Signal Sharing** — Agent A spots an arbitrage window on X Layer → encrypted broadcast to its trust circle → each receiving agent independently decides whether to execute. A decentralized alpha distribution network.
+
+🪪 **Shareable Identity** — Export a self-contained HTML contact card with QR code. Host it on your website, share it on Twitter, print it on a business card. Anyone can scan, import, and request a connection.
+
+🛡️ **Zero-Trust by Default** — Cold inbound messages hit a consent gate. No one talks to your agent without permission. Connection requests carry signed identity artifacts that can be verified on-chain.
+
+### Getting Started
+
 **Quick Start:**
 - 🧭 **One Pager**: `docs/AGENT_COMM_ONE_PAGER.md` — Human-friendly story + OpenClaw-first flow
 - 🚀 **Production Deployment Guide**: `docs/AGENT_COMM_PRODUCTION_DEPLOYMENT.md` — Battle-tested 6-step deployment

@@ -459,7 +459,7 @@ export async function run(): Promise<void> {
       if (outputPath) {
         if (parsed.flags.get("html")) {
           const { generateCardHtml } = await import("./skills/alphaos/runtime/agent-comm/card-html");
-          fs.writeFileSync(outputPath, generateCardHtml(result.bundle));
+          fs.writeFileSync(outputPath, await generateCardHtml(result.bundle));
         } else {
           fs.writeFileSync(outputPath, `${JSON.stringify(result.bundle, null, 2)}\n`);
         }
