@@ -124,6 +124,21 @@ function asFiniteNumber(input: unknown): number | null {
   return typeof input === "number" && Number.isFinite(input) ? input : null;
 }
 
+function capitalize(value: string): string {
+  return value ? value[0].toUpperCase() + value.slice(1) : value;
+}
+
+function toSnakeCase(value: string): string {
+  return value.replace(/([A-Z])/g, "_$1").toLowerCase();
+}
+
+function prefixedHistoryKeys(leg: "buy" | "sell", keys: string[]): string[] {
+  const prefixes = leg === "buy" ? ["buy", "buyLeg"] : ["sell", "sellLeg"];
+  return prefixes.flatMap((prefix) =>
+    keys.flatMap((key) => [`${prefix}${capitalize(key)}`, `${prefix}_${toSnakeCase(key)}`]),
+  );
+}
+
 function splitPair(pair: string): { base: string; quote: string } {
   const [baseRaw, quoteRaw] = pair.toUpperCase().split("/");
   return {
@@ -542,14 +557,16 @@ export class OnchainOsClient {
           { txData: sellSwap.txData, to: sellSwap.to, value: sellSwap.value },
         ],
       });
-      await this.getHistoryV6(atomicBroadcast.txHash);
+      const bundleHistory = await this.getHistoryV6(atomicBroadcast.txHash);
+      const settledBuyQuote = this.reconcileSettledQuote(buyQuote, bundleHistory, "buy", false);
+      const settledSellQuote = this.reconcileSettledQuote(sellQuote, bundleHistory, "sell", false);
 
       const executionPnl = this.estimateConservativeExecutionPnl({
         plan,
         quoteTokenDecimals: quoteToken.decimals,
         baseTokenDecimals: baseToken.decimals,
-        buyQuote,
-        sellQuote,
+        buyQuote: settledBuyQuote,
+        sellQuote: settledSellQuote,
         startedAt,
       });
       return {
@@ -586,13 +603,14 @@ export class OnchainOsClient {
       leg: "buy",
     });
 
-    const sellAmount = Math.max(1, Math.floor(toNumber(buyLeg.quote.toTokenAmount, 0)));
+    const sellAmount = Math.max(1, Math.floor(toNumber(buyLeg.settledQuote.toTokenAmount, 0)));
     if (!Number.isFinite(sellAmount) || sellAmount <= 0) {
       throw new OnchainApiError("buy leg returned invalid toTokenAmount", 422, "SELL_AMOUNT_INVALID");
     }
 
     let sellLeg: {
       quote: OnchainV6QuoteResponse;
+      settledQuote: OnchainV6QuoteResponse;
       broadcast: OnchainV6BroadcastResponse;
     };
     try {
@@ -623,8 +641,8 @@ export class OnchainOsClient {
           plan,
           quoteTokenDecimals: quoteToken.decimals,
           baseTokenDecimals: baseToken.decimals,
-          buyQuote: buyLeg.quote,
-          sellQuote: hedge.leg.quote,
+          buyQuote: buyLeg.settledQuote,
+          sellQuote: hedge.leg.settledQuote,
           startedAt,
         });
         return {
@@ -640,10 +658,10 @@ export class OnchainOsClient {
         };
       }
 
-      const buySpendUsd = toTokenUnits(buyLeg.quote.fromTokenAmount, quoteToken.decimals);
+      const buySpendUsd = toTokenUnits(buyLeg.settledQuote.fromTokenAmount, quoteToken.decimals);
       const buyFeeUsd =
-        Math.max(0, toNumber(buyLeg.quote.estimateGasFee, this.options.gasUsdDefault)) +
-        Math.max(0, toNumber(buyLeg.quote.tradeFee, plan.notionalUsd * 0.0006));
+        Math.max(0, toNumber(buyLeg.settledQuote.estimateGasFee, this.options.gasUsdDefault)) +
+        Math.max(0, toNumber(buyLeg.settledQuote.tradeFee, plan.notionalUsd * 0.0006));
       return {
         success: false,
         txHash: buyLeg.broadcast.txHash,
@@ -661,8 +679,8 @@ export class OnchainOsClient {
       plan,
       quoteTokenDecimals: quoteToken.decimals,
       baseTokenDecimals: baseToken.decimals,
-      buyQuote: buyLeg.quote,
-      sellQuote: sellLeg.quote,
+      buyQuote: buyLeg.settledQuote,
+      sellQuote: sellLeg.settledQuote,
       startedAt,
     });
 
@@ -685,7 +703,11 @@ export class OnchainOsClient {
     dexId: string;
     userWalletAddress: string;
     leg: "buy" | "sell" | "hedge";
-  }): Promise<{ quote: OnchainV6QuoteResponse; broadcast: OnchainV6BroadcastResponse }> {
+  }): Promise<{
+    quote: OnchainV6QuoteResponse;
+    settledQuote: OnchainV6QuoteResponse;
+    broadcast: OnchainV6BroadcastResponse;
+  }> {
     const quote = await this.getQuoteV6({
       chainIndex: input.chainIndex,
       fromTokenAddress: input.fromTokenAddress,
@@ -725,8 +747,9 @@ export class OnchainOsClient {
       value: swap.value,
       userWalletAddress: input.userWalletAddress,
     });
-    await this.getHistoryV6(broadcast.txHash);
-    return { quote, broadcast };
+    const history = await this.getHistoryV6(broadcast.txHash);
+    const settledQuote = this.reconcileSettledQuote(quote, history);
+    return { quote, settledQuote, broadcast };
   }
 
   private async tryHedgeAfterPartialFill(input: {
@@ -741,6 +764,7 @@ export class OnchainOsClient {
         leg: {
           dexId: string;
           quote: OnchainV6QuoteResponse;
+          settledQuote: OnchainV6QuoteResponse;
           broadcast: OnchainV6BroadcastResponse;
         };
       }
@@ -763,6 +787,7 @@ export class OnchainOsClient {
           leg: {
             dexId,
             quote: hedgeLeg.quote,
+            settledQuote: hedgeLeg.settledQuote,
             broadcast: hedgeLeg.broadcast,
           },
         };
@@ -1114,6 +1139,69 @@ export class OnchainOsClient {
     const buyTradeFee = toNumber(buyQuote.tradeFee, notionalUsd * 0.0006);
     const sellTradeFee = toNumber(sellQuote.tradeFee, notionalUsd * 0.0006);
     return buyGas + sellGas + buyTradeFee + sellTradeFee;
+  }
+
+  private reconcileSettledQuote(
+    quote: OnchainV6QuoteResponse,
+    history: Record<string, unknown> | null,
+    leg?: "buy" | "sell",
+    allowGeneric = true,
+  ): OnchainV6QuoteResponse {
+    if (!history) {
+      return quote;
+    }
+    const fromKeys = [
+      "actualFromTokenAmount",
+      "filledFromTokenAmount",
+      "executedFromTokenAmount",
+      "fromTokenAmount",
+      "fromAmount",
+      "amountIn",
+      "inputAmount",
+    ];
+    const toKeys = [
+      "actualToTokenAmount",
+      "filledToTokenAmount",
+      "executedToTokenAmount",
+      "toTokenAmount",
+      "toAmount",
+      "amountOut",
+      "outputAmount",
+    ];
+    const gasKeys = [
+      "actualGasFee",
+      "gasFee",
+      "txFee",
+      "networkFee",
+      "totalGasFee",
+      "estimateGasFee",
+    ];
+    const tradeFeeKeys = ["actualTradeFee", "tradeFee", "protocolFee", "swapFee", "dexFee"];
+    return {
+      fromTokenAmount:
+        this.pickHistoryValue(history, leg, allowGeneric, fromKeys) ?? quote.fromTokenAmount,
+      toTokenAmount:
+        this.pickHistoryValue(history, leg, allowGeneric, toKeys) ?? quote.toTokenAmount,
+      estimateGasFee:
+        this.pickHistoryValue(history, leg, allowGeneric, gasKeys) ?? quote.estimateGasFee,
+      tradeFee:
+        this.pickHistoryValue(history, leg, allowGeneric, tradeFeeKeys) ?? quote.tradeFee,
+      dexRouterList: quote.dexRouterList,
+      raw: history,
+    };
+  }
+
+  private pickHistoryValue(
+    payload: Record<string, unknown>,
+    leg: "buy" | "sell" | undefined,
+    allowGeneric: boolean,
+    keys: string[],
+  ): string | undefined {
+    const candidates = [
+      ...(leg ? prefixedHistoryKeys(leg, keys) : []),
+      ...(allowGeneric ? keys : []),
+    ];
+    return this.pickString(payload, candidates);
   }
 
   private estimateConservativeExecutionPnl(input: {

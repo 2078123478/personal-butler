@@ -570,6 +570,102 @@ describe("OnchainOsClient v6 integration", () => {
     expect(result.netUsd).toBeLessThan(result.grossUsd);
   });
 
+  it("uses settled history amounts and fees for dual-leg pnl when available", async () => {
+    let broadcastCount = 0;
+    const mockFetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      const pathname = url.pathname;
+      const from = url.searchParams.get("fromTokenAddress");
+      const to = url.searchParams.get("toTokenAddress");
+      const tokenSymbol = url.searchParams.get("tokenSymbol");
+      const txHash = url.searchParams.get("txHash");
+
+      if (pathname.includes("/market/token/profile/current")) {
+        if (tokenSymbol === "USDC") {
+          return jsonResponse({ data: [{ tokenContractAddress: "0xusdc", tokenDecimal: "6" }] });
+        }
+        return jsonResponse({ data: [{ tokenContractAddress: "0xeth", tokenDecimal: "18" }] });
+      }
+      if (pathname.includes("/aggregator/quote")) {
+        if (from === "0xusdc" && to === "0xeth") {
+          return jsonResponse({
+            data: [
+              {
+                fromTokenAmount: "100000000",
+                toTokenAmount: "50000000000000000",
+                estimateGasFee: "0",
+                tradeFee: "0",
+                dexRouterList: [{ dexName: "dex-a" }],
+              },
+            ],
+          });
+        }
+        return jsonResponse({
+          data: [
+            {
+              fromTokenAmount: "50000000000000000",
+              toTokenAmount: "100000000",
+              estimateGasFee: "0",
+              tradeFee: "0",
+              dexRouterList: [{ dexName: "dex-b" }],
+            },
+          ],
+        });
+      }
+      if (pathname.includes("/aggregator/swap")) {
+        if (from === "0xusdc" && to === "0xeth") {
+          return jsonResponse({ data: [{ txData: "0xbuy", to: "0xrouter-a", value: "0" }] });
+        }
+        return jsonResponse({ data: [{ txData: "0xsell", to: "0xrouter-b", value: "0" }] });
+      }
+      if (pathname.includes("/broadcast-transaction")) {
+        broadcastCount += 1;
+        return jsonResponse({ data: [{ txHash: broadcastCount === 1 ? "0xbuytx" : "0xselltx" }] });
+      }
+      if (pathname.includes("/aggregator/history")) {
+        if (txHash === "0xbuytx") {
+          return jsonResponse({
+            data: [{ fromTokenAmount: "100000000", toTokenAmount: "49000000000000000", gasFee: "2", tradeFee: "1" }],
+          });
+        }
+        return jsonResponse({
+          data: [{ fromTokenAmount: "49000000000000000", toTokenAmount: "99000000", gasFee: "3", tradeFee: "1" }],
+        });
+      }
+      return jsonResponse({ code: "404" }, 404);
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    const client = new OnchainOsClient({
+      apiBase: "http://localhost:9999",
+      apiKey: "k1",
+      authMode: "bearer",
+      apiKeyHeader: "X-API-Key",
+      gasUsdDefault: 0,
+      chainIndex: "196",
+      requireSimulate: false,
+      enableCompatFallback: false,
+      tokenCacheTtlSeconds: 600,
+      tokenProfilePath: "/api/v6/market/token/profile/current",
+    });
+
+    const result = await client.executeDualLeg({
+      opportunityId: "opp-history-pnl",
+      strategyId: "dex-arbitrage",
+      pair: "ETH/USDC",
+      buyDex: "dex-a",
+      sellDex: "dex-b",
+      buyPrice: 100,
+      sellPrice: 101,
+      notionalUsd: 100,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.grossUsd).toBeCloseTo(-1, 6);
+    expect(result.feeUsd).toBeCloseTo(7, 6);
+    expect(result.netUsd).toBeCloseTo(-8, 6);
+  });
+
   it("fails when quote route does not match constrained dex", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "alphaos-route-"));
     tempDirs.push(tempDir);
