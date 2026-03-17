@@ -13,6 +13,7 @@ import { SandboxReplayService } from "../runtime/sandbox-replay";
 import { DiscoveryEngine } from "../runtime/discovery/discovery-engine";
 import type { BacktestSnapshotRow, RiskPolicy, SkillManifest } from "../types";
 import { adaptArbitrageModuleResponse } from "../module/response-adapter";
+import type { FirstBatchArbitrageAdapterInputs } from "../module/adapters";
 import {
   exportIdentityArtifactBundle,
   importRevocationNotice,
@@ -411,6 +412,13 @@ function parseOptionalPositiveNumber(input: unknown): { ok: true; value?: number
     return { ok: false };
   }
   return { ok: true, value: parsed };
+}
+
+function parseFirstBatchAdapterInputs(input: unknown): FirstBatchArbitrageAdapterInputs | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as FirstBatchArbitrageAdapterInputs;
 }
 
 function parseOptionalPositiveInteger(input: unknown): { ok: true; value?: number } | { ok: false } {
@@ -1868,6 +1876,7 @@ export function createServer(
       const discoveryCandidate = store.getDiscoveryCandidate(sessionId, candidateId) ?? undefined;
       const result = await discovery.approveCandidate(sessionId, candidateId, mode);
       const updatedCandidate = store.getDiscoveryCandidate(sessionId, candidateId) ?? discoveryCandidate;
+      const compatibilityAdapters = parseFirstBatchAdapterInputs(req.body?.adapterInputs);
       const moduleResponse = adaptArbitrageModuleResponse({
         requestId: `discovery:${sessionId}:${candidateId}`,
         mode,
@@ -1875,6 +1884,7 @@ export function createServer(
         effectiveMode: result.effectiveMode,
         discoveryCandidate: updatedCandidate ?? undefined,
         approveResult: result,
+        compatibilityAdapters,
       });
       res.json({
         ...result,

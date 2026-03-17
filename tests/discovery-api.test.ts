@@ -373,12 +373,86 @@ describe("discovery api", () => {
       app,
       "POST",
       "/api/v1/discovery/sessions/session-1/approve",
-      { candidateId: "candidate-1", mode: "paper" },
+      {
+        candidateId: "candidate-1",
+        mode: "paper",
+        adapterInputs: {
+          market: {
+            spot: {
+              provider: {
+                sourceSkill: "binance/spot",
+                payload: {
+                  pair: "ETH/USDC",
+                  bid: 2048.1,
+                  ask: 2048.6,
+                  quoteTs: "2026-03-17T01:00:00.000Z",
+                  chainId: 56,
+                },
+              },
+            },
+          },
+          readiness: {
+            assets: {
+              provider: {
+                sourceSkill: "binance/assets",
+                payload: {
+                  accountScope: "default",
+                  availableNotionalUsd: 2500,
+                  requiredNotionalUsd: 1000,
+                  baseAssetReady: true,
+                  quoteAssetReady: true,
+                },
+              },
+            },
+          },
+          enrichment: {
+            tokenInfo: {
+              provider: {
+                sourceSkill: "binance-web3/query-token-info",
+                payload: {
+                  name: "Wrapped Ether",
+                  symbol: "ETH",
+                  chainId: 56,
+                },
+              },
+            },
+            tokenAudit: {
+              provider: {
+                sourceSkill: "binance-web3/query-token-audit",
+                payload: {
+                  tokenRisk: "normal",
+                  auditFlags: [],
+                },
+              },
+            },
+          },
+        },
+      },
       auth(),
     );
     expect(approve.status).toBe(200);
     expect((approve.body as { approved: boolean }).approved).toBe(true);
-    expect((approve.body as { moduleResponse: { module: string } }).moduleResponse.module).toBe("arbitrage");
+    const moduleResponse = (approve.body as {
+      moduleResponse: {
+        module: string;
+        marketContext?: { pair: string; sourceSkill: string };
+        readinessContext?: { balanceReady: boolean; sourceSkill: string };
+        enrichmentContext?: { sourceSkills: string[] };
+        skillUsage: { required: string[]; enrichment: string[] };
+      };
+    }).moduleResponse;
+    expect(moduleResponse.module).toBe("arbitrage");
+    expect(moduleResponse.marketContext?.pair).toBe("ETH/USDC");
+    expect(moduleResponse.marketContext?.sourceSkill).toBe("binance/spot");
+    expect(moduleResponse.readinessContext?.balanceReady).toBe(true);
+    expect(moduleResponse.readinessContext?.sourceSkill).toBe("binance/assets");
+    expect(moduleResponse.enrichmentContext?.sourceSkills).toEqual(
+      expect.arrayContaining(["binance-web3/query-token-info", "binance-web3/query-token-audit"]),
+    );
+    expect(moduleResponse.skillUsage.required).toEqual(expect.arrayContaining(["binance/spot", "binance/assets"]));
+    expect(moduleResponse.skillUsage.enrichment).toEqual(
+      expect.arrayContaining(["binance-web3/query-token-info", "binance-web3/query-token-audit"]),
+    );
 
     const stop = await invokeApi(
       app,

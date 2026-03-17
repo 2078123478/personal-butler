@@ -7,6 +7,10 @@ import {
   normalizeRiskReasonBundle,
   normalizeSimulationReasonBundle,
 } from "./reason-normalizer";
+import {
+  composeFirstBatchArbitrageAdapterContexts,
+  mergeNormalizedEnrichmentContexts,
+} from "./adapters";
 import type {
   ArbitrageCandidateLifecycleStatus,
   ArbitrageCandidateRecord,
@@ -16,6 +20,10 @@ import type {
   ArbitrageModuleResponse,
   ArbitrageModuleStatus,
   ArbitrageExecutionView,
+  NormalizedDistributionContext,
+  NormalizedEnrichmentContext,
+  NormalizedMarketContext,
+  NormalizedReadinessContext,
   ArbitrageReasonCode,
   ArbitrageResponseAdapterInput,
   ArbitrageRequestedMode,
@@ -287,24 +295,34 @@ function normalizeTokenRisk(value: unknown): "low" | "normal" | "high" | "unknow
   return undefined;
 }
 
-function mergeSkillUsage(input: ArbitrageResponseAdapterInput): ArbitrageSkillUsage {
+function mergeSkillUsage(input: {
+  skillUsage?: Partial<ArbitrageSkillUsage>;
+  adapterSkillUsage?: Partial<ArbitrageSkillUsage>;
+  marketContext?: NormalizedMarketContext;
+  readinessContext?: NormalizedReadinessContext;
+  enrichmentContext?: NormalizedEnrichmentContext;
+  distributionContext?: NormalizedDistributionContext;
+}): ArbitrageSkillUsage {
   const required = dedupe([
     ...DEFAULT_SKILL_USAGE.required,
+    ...(input.adapterSkillUsage?.required ?? []),
     ...(input.skillUsage?.required ?? []),
     ...(input.marketContext?.sourceSkill ? [input.marketContext.sourceSkill] : []),
     ...(input.readinessContext?.sourceSkill ? [input.readinessContext.sourceSkill] : []),
   ]);
   const enrichment = dedupe([
     ...DEFAULT_SKILL_USAGE.enrichment,
+    ...(input.adapterSkillUsage?.enrichment ?? []),
     ...(input.skillUsage?.enrichment ?? []),
     ...(input.enrichmentContext?.sourceSkills ?? []),
   ]);
   const distribution = dedupe([
     ...DEFAULT_SKILL_USAGE.distribution,
+    ...(input.adapterSkillUsage?.distribution ?? []),
     ...(input.skillUsage?.distribution ?? []),
     ...(input.distributionContext?.sourceSkill ? [input.distributionContext.sourceSkill] : []),
   ]);
-  const metadata = input.skillUsage?.metadata ?? DEFAULT_SKILL_USAGE.metadata;
+  const metadata = input.skillUsage?.metadata ?? input.adapterSkillUsage?.metadata ?? DEFAULT_SKILL_USAGE.metadata;
   return {
     required,
     enrichment,
@@ -401,9 +419,17 @@ export function adaptArbitrageModuleResponse(input: ArbitrageResponseAdapterInpu
     approveResult?.degradedToPaper ??
     (requestedMode === "live" && effectiveMode === "paper"),
   );
+  const adapterContexts = composeFirstBatchArbitrageAdapterContexts(input.compatibilityAdapters);
+  const marketContext = input.marketContext ?? adapterContexts.marketContext;
+  const readinessContext = input.readinessContext ?? adapterContexts.readinessContext;
+  const enrichmentContext = mergeNormalizedEnrichmentContexts(
+    input.enrichmentContext,
+    adapterContexts.enrichmentContext,
+  );
+  const distributionContext = input.distributionContext;
 
-  const readinessBundle = input.readinessContext
-    ? input.readinessContext.balanceReady
+  const readinessBundle = readinessContext
+    ? readinessContext.balanceReady
       ? { reasonCodes: ["balance_context_attached", "balance_ready"] satisfies ArbitrageReasonCode[], blockingReasonCodes: [] }
       : {
           reasonCodes: ["balance_context_attached", "balance_insufficient"] satisfies ArbitrageReasonCode[],
@@ -413,37 +439,37 @@ export function adaptArbitrageModuleResponse(input: ArbitrageResponseAdapterInpu
 
   const enrichmentReasonCodes: ArbitrageReasonCode[] = [];
   const enrichmentBlockingCodes: ArbitrageReasonCode[] = [];
-  if (input.enrichmentContext?.token) {
+  if (enrichmentContext?.token) {
     enrichmentReasonCodes.push("token_info_attached");
   }
-  if (input.enrichmentContext?.risk) {
+  if (enrichmentContext?.risk) {
     enrichmentReasonCodes.push("token_audit_attached");
-    if ((input.enrichmentContext.risk.auditFlags ?? []).length > 0) {
+    if ((enrichmentContext.risk.auditFlags ?? []).length > 0) {
       enrichmentReasonCodes.push("audit_flagged");
       enrichmentBlockingCodes.push("audit_flagged");
     } else {
       enrichmentReasonCodes.push("audit_clear");
     }
-    if (input.enrichmentContext.risk.addressRiskLevel === "high") {
+    if (enrichmentContext.risk.addressRiskLevel === "high") {
       enrichmentReasonCodes.push("address_risk_high");
       enrichmentBlockingCodes.push("address_risk_high");
-    } else if (input.enrichmentContext.risk.addressRiskLevel) {
+    } else if (enrichmentContext.risk.addressRiskLevel) {
       enrichmentReasonCodes.push("address_risk_acceptable");
     }
   }
-  if (input.enrichmentContext?.signal) {
+  if (enrichmentContext?.signal) {
     enrichmentReasonCodes.push("signal_context_attached");
-    if (input.enrichmentContext.signal.signalSupport) {
+    if (enrichmentContext.signal.signalSupport) {
       enrichmentReasonCodes.push("signal_supported_candidate");
     }
   }
-  if (input.enrichmentContext?.marketNarrative?.rankSource) {
+  if (enrichmentContext?.marketNarrative?.rankSource) {
     enrichmentReasonCodes.push("market_rank_selected");
   }
-  if (input.enrichmentContext?.marketNarrative?.eventDriven) {
+  if (enrichmentContext?.marketNarrative?.eventDriven) {
     enrichmentReasonCodes.push("event_driven_candidate");
   }
-  if (input.marketContext) {
+  if (marketContext) {
     enrichmentReasonCodes.push("chain_context_attached");
   }
 
@@ -535,7 +561,14 @@ export function adaptArbitrageModuleResponse(input: ArbitrageResponseAdapterInpu
         ? (simulation.latencyAdjustedNetUsd / notionalUsd) * 10_000
         : simulation.netEdgeBps
       : discoveryCandidate?.expectedNetBps;
-  const skillUsage = mergeSkillUsage(input);
+  const skillUsage = mergeSkillUsage({
+    skillUsage: input.skillUsage,
+    adapterSkillUsage: adapterContexts.skillUsagePatch,
+    marketContext,
+    readinessContext,
+    enrichmentContext,
+    distributionContext,
+  });
 
   const candidate: ArbitrageCandidateRecord = {
     candidateId,
@@ -557,17 +590,17 @@ export function adaptArbitrageModuleResponse(input: ArbitrageResponseAdapterInpu
     },
     context: {
       chainId:
-        input.marketContext?.marketContext?.chainId ??
-        input.enrichmentContext?.token?.chainId ??
+        marketContext?.marketContext?.chainId ??
+        enrichmentContext?.token?.chainId ??
         asNumber(opportunity?.metadata?.chainId),
       tokenRisk:
-        input.enrichmentContext?.risk?.tokenRisk ??
+        enrichmentContext?.risk?.tokenRisk ??
         normalizeTokenRisk(opportunity?.metadata?.tokenRisk),
       balanceReady:
-        input.readinessContext?.balanceReady ??
+        readinessContext?.balanceReady ??
         asBoolean(opportunity?.metadata?.balanceReady),
       signalSupport:
-        input.enrichmentContext?.signal?.signalSupport ??
+        enrichmentContext?.signal?.signalSupport ??
         asBoolean(opportunity?.metadata?.signalSupport),
       quoteFreshnessMs:
         asNumber(opportunity?.metadata?.quoteFreshnessMs) ??
@@ -668,10 +701,10 @@ export function adaptArbitrageModuleResponse(input: ArbitrageResponseAdapterInpu
       blockingReasonCodes: normalizedReasons.blockingReasonCodes,
       confidence: discoveryCandidate?.confidence,
     },
-    marketContext: input.marketContext,
-    readinessContext: input.readinessContext,
-    enrichmentContext: input.enrichmentContext,
-    distributionContext: input.distributionContext,
+    marketContext,
+    readinessContext,
+    enrichmentContext,
+    distributionContext,
   };
 
   return response;

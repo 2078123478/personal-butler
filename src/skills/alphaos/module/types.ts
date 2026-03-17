@@ -6,6 +6,7 @@ import type {
   SimulationResult,
   TradeResult,
 } from "../types";
+import type { FirstBatchArbitrageAdapterInputs } from "./adapters/contracts";
 
 export type ArbitrageModuleId = "arbitrage";
 export type ArbitrageOpportunityType = "dex_spread";
@@ -330,10 +331,10 @@ export interface ArbitrageResponseAdapterInput {
     passed: boolean;
     reasons: string[];
   };
+  compatibilityAdapters?: FirstBatchArbitrageAdapterInputs;
   marketContext?: NormalizedMarketContext;
   readinessContext?: NormalizedReadinessContext;
   enrichmentContext?: NormalizedEnrichmentContext;
   distributionContext?: NormalizedDistributionContext;
   skillUsage?: Partial<ArbitrageSkillUsage>;
 }
-

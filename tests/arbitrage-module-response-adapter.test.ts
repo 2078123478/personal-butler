@@ -144,5 +144,78 @@ describe("arbitrage module response adapter", () => {
     expect(response.execution).toBeNull();
     expect(response.candidate?.blockingReasonCodes).toContain("net_edge_below_threshold");
   });
-});
 
+  it("composes first-batch adapter inputs and surfaces readiness/audit blocking reasons", () => {
+    const candidate = makeDiscoveryCandidate();
+    const response = adaptArbitrageModuleResponse({
+      requestId: "req_adapter_batch_001",
+      mode: "paper",
+      requestedMode: "paper",
+      discoveryCandidate: candidate,
+      compatibilityAdapters: {
+        market: {
+          spot: {
+            provider: {
+              sourceSkill: "binance/spot",
+              payload: {
+                pair: "ETH/USDC",
+                bid: 2048.1,
+                ask: 2048.6,
+                quoteTs: "2026-03-17T01:00:00.000Z",
+                chainId: 56,
+              },
+            },
+          },
+        },
+        readiness: {
+          assets: {
+            provider: {
+              sourceSkill: "binance/assets",
+              payload: {
+                availableNotionalUsd: 300,
+                requiredNotionalUsd: 1000,
+                baseAssetReady: true,
+                quoteAssetReady: false,
+              },
+            },
+          },
+        },
+        enrichment: {
+          tokenInfo: {
+            provider: {
+              sourceSkill: "binance-web3/query-token-info",
+              payload: {
+                name: "Wrapped Ether",
+                symbol: "ETH",
+                chainId: 56,
+              },
+            },
+          },
+          tokenAudit: {
+            provider: {
+              sourceSkill: "binance-web3/query-token-audit",
+              payload: {
+                tokenRisk: "high",
+                addressRiskLevel: "high",
+                auditFlags: ["owner_can_mint"],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(response.marketContext?.sourceSkill).toBe("binance/spot");
+    expect(response.readinessContext?.sourceSkill).toBe("binance/assets");
+    expect(response.enrichmentContext?.sourceSkills).toEqual(
+      expect.arrayContaining(["binance-web3/query-token-info", "binance-web3/query-token-audit"]),
+    );
+    expect(response.candidate?.blockingReasonCodes).toEqual(
+      expect.arrayContaining(["balance_insufficient", "audit_flagged", "address_risk_high"]),
+    );
+    expect(response.skillUsage.required).toEqual(expect.arrayContaining(["binance/spot", "binance/assets"]));
+    expect(response.skillUsage.enrichment).toEqual(
+      expect.arrayContaining(["binance-web3/query-token-info", "binance-web3/query-token-audit"]),
+    );
+  });
+});
