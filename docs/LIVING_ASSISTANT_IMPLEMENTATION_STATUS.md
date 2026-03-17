@@ -98,7 +98,7 @@ So the system can now do:
 
 ### 2.4 Voice generation and call delivery
 
-The system now supports two TTS families:
+The system now supports three TTS families:
 
 #### A. OpenAI-compatible TTS
 
@@ -115,6 +115,24 @@ It now supports:
 - `qwen3-tts-instruct-flash`
 - optional instructions / instruction optimization
 - hosted `audioUrl` return
+
+#### C. CosyVoice TTS (WebSocket)
+
+CosyVoice uses DashScope's WebSocket protocol for real-time speech synthesis.
+
+It now supports:
+
+- WebSocket duplex streaming protocol
+- preset system voices (`longxiaochun_v2`, `longanyang`, etc.)
+- custom cloned voices (via `CosyVoiceCloneService`)
+- `mp3`, `wav`, `pcm` output formats
+- configurable model (`cosyvoice-v2`, `cosyvoice-v3-flash`, `cosyvoice-v3-plus`, etc.)
+
+This is the recommended provider for production use because:
+
+- voice cloning enables a unique, branded assistant voice
+- WebSocket streaming provides low-latency audio generation
+- same API key works for both TTS and voice cloning
 
 ### 2.5 Telegram / Twilio / Aliyun delivery semantics
 
@@ -194,6 +212,44 @@ This is important for product narrative:
 - Telegram remains valid for reminder/voice-message style deployments
 - the deployment chooses the behavior
 - the codebase no longer implies one universal route priority
+
+### 3.7 CosyVoice WebSocket TTS
+
+Implemented:
+
+- `cosyvoice` TTS provider using DashScope WebSocket protocol
+- duplex streaming synthesis (`run-task` / `continue-task` / `finish-task`)
+- supports `mp3`, `wav`, `pcm` output formats
+- 30s timeout with proper error handling
+- preset voices (e.g. `longxiaochun_v2`) and cloned voices
+
+### 3.8 CosyVoice Voice Cloning
+
+Implemented:
+
+- `CosyVoiceCloneService` — full voice cloning lifecycle via DashScope HTTP API
+- `createVoice()` — clone from a 10–20s audio sample (public HTTPS URL required)
+- `designVoice()` — create voice from text description (no audio needed)
+- `queryVoice()` — check voice deployment status (`DEPLOYING` → `OK`)
+- `listVoices()` — paginated listing of all cloned voices
+- `waitForVoice()` — poll until voice is ready
+- uses same DashScope API key as TTS (no separate AK/SK needed)
+- endpoint: `POST https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization`
+
+Current cloned voices:
+
+| Voice ID | Description | Model |
+|----------|-------------|-------|
+| `cosyvoice-v2-wilsen-078bd152fc744a33871a0c71b32a6025` | 小音专属声音 ⭐ | cosyvoice-v2 |
+| `cosyvoice-v2-xiaoyin-1720c44b1f9d4a07a04290e57663ae4a` | 示例音频复刻 | cosyvoice-v2 |
+
+### 3.9 Inline Keyboard Buttons
+
+Implemented:
+
+- Telegram inline keyboard buttons on `strong_interrupt` / `call_escalation` messages
+- callback_data format: `la:act_now`, `la:defer_5m`, `la:ignore_once`
+- callback query handler not yet implemented (buttons render but no server-side handling)
 
 ---
 
@@ -320,6 +376,30 @@ TTS_INSTRUCTIONS=Use a calm but confident assistant tone.
 TTS_OPTIMIZE_INSTRUCTIONS=true
 ```
 
+#### `cosyvoice`
+
+Use when you want CosyVoice TTS with preset or cloned voices via DashScope WebSocket.
+
+CosyVoice is the only TTS provider that supports voice cloning — you can create a custom voice from a 10–20s audio sample and use it for all subsequent synthesis.
+
+Typical env:
+
+```bash
+TTS_PROVIDER=cosyvoice
+TTS_API_KEY=sk-...          # DashScope API key (same key for TTS + cloning)
+TTS_MODEL=cosyvoice-v2
+TTS_VOICE=cosyvoice-v2-wilsen-078bd152fc744a33871a0c71b32a6025  # cloned voice
+TTS_FORMAT=mp3
+```
+
+Key differences from other providers:
+
+- Uses **WebSocket** protocol (`wss://dashscope.aliyuncs.com/api-ws/v1/inference/`)
+- Duplex streaming: `run-task` → `task-started` → `continue-task`(text) → `finish-task` → binary audio chunks → `task-finished`
+- Supports `mp3`, `wav`, `pcm` output formats
+- Default model: `cosyvoice-v2`, default voice: `longxiaochun_v2`
+- 30s timeout per synthesis request
+
 ### 6.2 Important behavior difference
 
 - OpenAI-compatible providers usually return audio bytes directly
@@ -411,7 +491,7 @@ ALIYUN_ENDPOINT=
 ### TTS
 
 ```bash
-TTS_PROVIDER=
+TTS_PROVIDER=                    # openai-compatible | dashscope-qwen | cosyvoice
 TTS_BASE_URL=
 TTS_API_KEY=
 TTS_MODEL=
@@ -422,6 +502,16 @@ TTS_INSTRUCTIONS=
 TTS_OPTIMIZE_INSTRUCTIONS=
 TTS_DASHSCOPE_ENDPOINT=
 TTS_DASHSCOPE_LANGUAGE_TYPE=
+```
+
+### CosyVoice-specific
+
+```bash
+TTS_PROVIDER=cosyvoice
+TTS_API_KEY=sk-...               # DashScope API key
+TTS_MODEL=cosyvoice-v2
+TTS_VOICE=cosyvoice-v2-wilsen-078bd152fc744a33871a0c71b32a6025
+TTS_FORMAT=mp3                   # mp3 | wav | pcm
 ```
 
 ### Route policy
@@ -465,6 +555,25 @@ That means:
 
 Qwen TTS required a native provider because the generic OpenAI-compatible endpoint path was not correct for DashScope Qwen speech synthesis.
 
+### CosyVoice voice cloning requires a China-accessible HTTPS URL
+
+The `createVoice()` API requires a public HTTPS URL that DashScope (hosted in China mainland) can download.
+
+This means:
+
+- Telegram file URLs do not work (blocked in China)
+- HTTP-only URLs from overseas servers do not work (DashScope cannot reach them)
+- China-based CDN links (e.g. Lanzou Cloud direct links, Aliyun OSS) work reliably
+- The audio sample should be 10–20 seconds, clear speech, single speaker
+
+### CosyVoice uses WebSocket, not HTTP REST
+
+CosyVoice TTS synthesis only works via WebSocket (`wss://dashscope.aliyuncs.com/api-ws/v1/inference/`).
+
+Previous attempts to use HTTP REST endpoints (`multimodal-generation`, `speech-synthesizer`, `text2audio`, `compatible-mode/v1/audio/speech`) all returned `InvalidParameter: url error`.
+
+Voice cloning management (create/query/list) uses a separate HTTP REST endpoint and works fine.
+
 ### Telegram bot voice messages are not the same as Telegram real-time calls
 
 Current implementation supports:
@@ -499,6 +608,8 @@ If someone still wants to inspect the system shape, these are the highest-value 
 - `src/skills/alphaos/living-assistant/tts/provider-factory.ts`
 - `src/skills/alphaos/living-assistant/tts/openai-compatible-provider.ts`
 - `src/skills/alphaos/living-assistant/tts/dashscope-qwen-provider.ts`
+- `src/skills/alphaos/living-assistant/tts/cosyvoice-provider.ts`
+- `src/skills/alphaos/living-assistant/tts/voice-clone.ts`
 
 ### Signal radar
 
@@ -520,11 +631,12 @@ The system is already substantial, but a few meaningful next steps remain.
 
 Most relevant pending/extendable areas:
 
-- richer real TTS tuning / assistant voice polish
-- second-batch adapters (for example `query-address-info`, `trading-signal`)
-- more production-style scheduling around digest windows
-- more advanced phone/voice interaction patterns
-- broader live radar sources beyond announcements + Square
+- **Telegram inline button callback handler** — buttons render on `strong_interrupt` / `call_escalation` but server-side handling of `la:act_now`, `la:defer_5m`, `la:ignore_once` is not yet implemented
+- **Second-batch adapters** — `query-address-info`, `trading-signal`, and other signal sources
+- **More production-style scheduling** around digest windows
+- **More advanced phone/voice interaction patterns**
+- **Broader live radar sources** beyond announcements + Square
+- **Voice cloning workflow polish** — audio upload helper, voice preview before committing
 
 ---
 
