@@ -1,7 +1,7 @@
 import type { ContactDecision } from "../contact-policy";
 import type { TTSResult } from "../tts";
 import type { VoiceBrief } from "../voice-brief";
-import type { TelegramVoiceSendResult } from "./telegram-voice-sender";
+import type { TelegramInlineKeyboardButton, TelegramVoiceSendResult } from "./telegram-voice-sender";
 import { TelegramVoiceSender } from "./telegram-voice-sender";
 import type { VoiceDeliveryResult } from "./voice-orchestrator";
 import { VoiceDeliveryOrchestrator } from "./voice-orchestrator";
@@ -53,6 +53,15 @@ function escalationFollowUp(decision: ContactDecision): string {
     "3. Execute the safest mitigation path or pause the strategy.",
     cooldownLine,
   ].join("\n");
+}
+
+function toInlineKeyboard(decision: ContactDecision): TelegramInlineKeyboardButton[][] | undefined {
+  const actions = decision.suggestedActions?.slice(0, 3) ?? ["act_now", "defer_5m", "ignore_once"];
+  if (actions.length === 0) return undefined;
+  return [actions.map((action) => ({
+    text: action.replace(/_/g, " "),
+    callback_data: `la:${action}`,
+  }))];
 }
 
 function toErrorMessage(results: TelegramVoiceSendResult[]): string | undefined {
@@ -214,9 +223,10 @@ export async function executeDelivery(
 
   if (decision.attentionLevel === "strong_interrupt") {
     const followUpText = strongInterruptFollowUp(decision);
+    const keyboard = toInlineKeyboard(decision);
     const audioBytes = await resolveAudioBytes(audio);
     if (audioBytes) {
-      const combined = await sender.sendVoiceWithFollowUp(audioBytes, briefText, followUpText);
+      const combined = await sender.sendVoiceWithFollowUp(audioBytes, briefText, followUpText, { inlineKeyboard: keyboard });
       return {
         channel: "telegram",
         sent: combined.voice.ok && combined.followUp.ok,
@@ -230,7 +240,7 @@ export async function executeDelivery(
     }
 
     const voiceFallbackText = await sender.sendText(briefText);
-    const followUp = await sender.sendText(followUpText);
+    const followUp = await sender.sendMessage(followUpText, { inlineKeyboard: keyboard });
     return {
       channel: "telegram",
       sent: voiceFallbackText.ok && followUp.ok,
@@ -245,9 +255,10 @@ export async function executeDelivery(
 
   const escalationText = escalationFollowUp(decision);
   const urgentCaption = `URGENT: ${briefText}`;
+  const keyboard = toInlineKeyboard(decision);
   const audioBytes = await resolveAudioBytes(audio);
   if (audioBytes) {
-    const combined = await sender.sendVoiceWithFollowUp(audioBytes, urgentCaption, escalationText);
+    const combined = await sender.sendVoiceWithFollowUp(audioBytes, urgentCaption, escalationText, { inlineKeyboard: keyboard });
     return {
       channel: "telegram",
       sent: combined.voice.ok && combined.followUp.ok,
@@ -261,7 +272,7 @@ export async function executeDelivery(
   }
 
   const urgentText = await sender.sendText(urgentCaption);
-  const planText = await sender.sendText(escalationText);
+  const planText = await sender.sendMessage(escalationText, { inlineKeyboard: keyboard });
   return {
     channel: "telegram",
     sent: urgentText.ok && planText.ok,

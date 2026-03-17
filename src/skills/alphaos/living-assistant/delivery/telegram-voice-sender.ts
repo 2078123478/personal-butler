@@ -28,10 +28,17 @@ interface TelegramVoiceOptions {
   disableNotification?: boolean;
 }
 
+export interface TelegramInlineKeyboardButton {
+  text: string;
+  callback_data?: string;
+  url?: string;
+}
+
 interface TelegramMessageOptions {
   chatId?: string;
   parseMode?: string;
   disableNotification?: boolean;
+  inlineKeyboard?: TelegramInlineKeyboardButton[][];
 }
 
 const CRLF = "\r\n";
@@ -117,7 +124,7 @@ export class TelegramVoiceSender {
       return { ok: false, error: "sendMessage failed: text is empty", sentAt };
     }
 
-    const payload: Record<string, string | boolean> = {
+    const payload: Record<string, unknown> = {
       chat_id: chatId,
       text: trimmedText,
     };
@@ -126,6 +133,11 @@ export class TelegramVoiceSender {
     }
     if (typeof options?.disableNotification === "boolean") {
       payload.disable_notification = options.disableNotification;
+    }
+    if (options?.inlineKeyboard && options.inlineKeyboard.length > 0) {
+      payload.reply_markup = {
+        inline_keyboard: options.inlineKeyboard,
+      };
     }
 
     try {
@@ -152,7 +164,7 @@ export class TelegramVoiceSender {
     audio: Buffer,
     voiceCaption: string,
     followUpText: string,
-    options?: TelegramVoiceOptions,
+    options?: TelegramVoiceOptions & { inlineKeyboard?: TelegramInlineKeyboardButton[][] },
   ): Promise<{ voice: TelegramVoiceSendResult; followUp: TelegramVoiceSendResult }> {
     const voice = await this.sendVoice(audio, {
       ...options,
@@ -162,6 +174,7 @@ export class TelegramVoiceSender {
       chatId: options?.chatId,
       parseMode: options?.parseMode,
       disableNotification: options?.disableNotification,
+      inlineKeyboard: options?.inlineKeyboard,
     });
     return { voice, followUp };
   }
