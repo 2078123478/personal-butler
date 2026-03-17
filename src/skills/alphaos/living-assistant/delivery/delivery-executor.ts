@@ -3,9 +3,12 @@ import type { TTSResult } from "../tts";
 import type { VoiceBrief } from "../voice-brief";
 import type { TelegramVoiceSendResult } from "./telegram-voice-sender";
 import { TelegramVoiceSender } from "./telegram-voice-sender";
+import type { VoiceDeliveryResult } from "./voice-orchestrator";
+import { VoiceDeliveryOrchestrator } from "./voice-orchestrator";
 
 export interface DeliveryExecutorConfig {
   telegramSender?: TelegramVoiceSender;
+  voiceOrchestrator?: VoiceDeliveryOrchestrator;
   dryRun?: boolean;
 }
 
@@ -15,6 +18,7 @@ export interface DeliveryResult {
   dryRun: boolean;
   voiceResult?: TelegramVoiceSendResult;
   textResult?: TelegramVoiceSendResult;
+  orchestratorResults?: VoiceDeliveryResult[];
   error?: string;
 }
 
@@ -56,6 +60,23 @@ function toErrorMessage(results: TelegramVoiceSendResult[]): string | undefined 
   return failures.join(" | ");
 }
 
+function toOrchestratorError(results: VoiceDeliveryResult[]): string | undefined {
+  const failures = results
+    .filter((result) => !result.ok)
+    .map((result) => {
+      const detail = result.detail as { error?: string };
+      if (typeof detail.error === "string" && detail.error.trim().length > 0) {
+        return `${result.channel}: ${detail.error}`;
+      }
+      return `${result.channel}: unknown error`;
+    });
+
+  if (failures.length === 0) {
+    return undefined;
+  }
+  return failures.join(" | ");
+}
+
 export async function executeDelivery(
   decision: ContactDecision,
   brief?: VoiceBrief,
@@ -70,8 +91,43 @@ export async function executeDelivery(
     };
   }
 
+  if (config?.dryRun) {
+    return {
+      channel: decision.channels[0] ?? "none",
+      sent: false,
+      dryRun: true,
+    };
+  }
+
+  const voiceOrchestrator = config?.voiceOrchestrator;
+  const shouldUseVoiceOrchestrator =
+    Boolean(voiceOrchestrator) &&
+    (decision.attentionLevel === "strong_interrupt" || decision.attentionLevel === "call_escalation");
+  if (shouldUseVoiceOrchestrator && voiceOrchestrator) {
+    const briefText = brief?.text ?? decision.reason;
+    const orchestratorResults = await voiceOrchestrator.deliver(decision.attentionLevel, {
+      text: briefText,
+      ...(audio ? { audio: audio.audio, audioFormat: audio.format } : {}),
+    });
+    const firstSuccess = orchestratorResults.find((result) => result.ok)?.channel;
+    const firstAttempt = orchestratorResults[0]?.channel;
+    const sent = orchestratorResults.some((result) => result.ok);
+    const error =
+      sent || orchestratorResults.length === 0
+        ? undefined
+        : toOrchestratorError(orchestratorResults) ?? "voice delivery failed";
+
+    return {
+      channel: firstSuccess ?? firstAttempt ?? "voice",
+      sent,
+      dryRun: false,
+      orchestratorResults,
+      ...(error ? { error } : {}),
+    };
+  }
+
   const sender = config?.telegramSender;
-  if (config?.dryRun || !sender) {
+  if (!sender) {
     return {
       channel: "telegram",
       sent: false,

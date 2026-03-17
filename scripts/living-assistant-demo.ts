@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defaultContactPolicyConfig, type ContactPolicyConfig, type UserContext } from "../src/skills/alphaos/living-assistant/contact-policy";
-import { TelegramVoiceSender, type DeliveryExecutorConfig } from "../src/skills/alphaos/living-assistant/delivery";
+import { TelegramVoiceSender, VoiceDeliveryOrchestrator, type DeliveryExecutorConfig } from "../src/skills/alphaos/living-assistant/delivery";
 import { runLivingAssistantLoop } from "../src/skills/alphaos/living-assistant/loop";
 import { normalizeSignal, pollBinanceAnnouncements, type NormalizedSignal } from "../src/skills/alphaos/living-assistant/signal-radar";
 import { createTTSProvider, type TTSOptions, type TTSProvider } from "../src/skills/alphaos/living-assistant/tts";
@@ -26,12 +26,14 @@ interface DemoCliOptions {
   live: boolean;
   dryRun: boolean;
   send: boolean;
+  call: boolean;
 }
 
 interface DemoRuntime {
   ttsProvider?: TTSProvider;
   ttsOptions?: TTSOptions;
   deliveryExecutor?: DeliveryExecutorConfig;
+  callProviders?: string[];
 }
 
 interface LoopScenarioInput {
@@ -42,7 +44,8 @@ interface LoopScenarioInput {
   policyConfig?: Partial<ContactPolicyConfig>;
 }
 
-const LIVE_CONTEXT_SCENARIO = "proactive-arbitrage-alert";
+const SEND_FIXTURE_SCENARIO = "proactive-arbitrage-alert";
+const CALL_FIXTURE_SCENARIO = "critical-risk-escalation";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -94,17 +97,18 @@ function formatDurationMs(value: number): string {
 }
 
 function printUsageAndExit(): never {
-  console.log("Usage: npm run demo:living-assistant -- [--live] [--dry-run|--send]");
+  console.log("Usage: npm run demo:living-assistant -- [--live] [--dry-run|--send|--call]");
   console.log("");
   console.log("Flags:");
   console.log("  --live     Poll real Binance announcements and run one loop per signal");
   console.log("  --dry-run  Print decision/brief only (default)");
   console.log("  --send     Run real delivery (requires TTS and Telegram env vars)");
+  console.log("  --call     Run phone delivery via Twilio/Aliyun (Twilio first), optional Telegram fallback");
   process.exit(0);
 }
 
 function parseCliOptions(argv = process.argv.slice(2)): DemoCliOptions {
-  const knownFlags = new Set(["--live", "--dry-run", "--send", "--help", "-h"]);
+  const knownFlags = new Set(["--live", "--dry-run", "--send", "--call", "--help", "-h"]);
   for (const arg of argv) {
     if (!knownFlags.has(arg)) {
       throw new Error(`Unknown CLI argument: ${arg}`);
@@ -116,15 +120,23 @@ function parseCliOptions(argv = process.argv.slice(2)): DemoCliOptions {
   }
 
   const send = argv.includes("--send");
+  const call = argv.includes("--call");
   const dryRunFlag = argv.includes("--dry-run");
+  if (send && call) {
+    throw new Error("Cannot combine --send and --call");
+  }
   if (send && dryRunFlag) {
     throw new Error("Cannot combine --send and --dry-run");
+  }
+  if (call && dryRunFlag) {
+    throw new Error("Cannot combine --call and --dry-run");
   }
 
   return {
     live: argv.includes("--live"),
-    dryRun: !send,
+    dryRun: !send && !call,
     send,
+    call,
   };
 }
 
@@ -174,10 +186,143 @@ function buildSendRuntime(): DemoRuntime {
   return runtime;
 }
 
+function readOptionalEnv(name: string): string | undefined {
+  const value = process.env[name];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function buildCallRuntime(): DemoRuntime {
+  const runtime = buildOptionalTTS();
+
+  const twilioAccountSid = readOptionalEnv("TWILIO_ACCOUNT_SID");
+  const twilioAuthToken = readOptionalEnv("TWILIO_AUTH_TOKEN");
+  const twilioFromNumber = readOptionalEnv("TWILIO_FROM_NUMBER");
+  const twilioToNumber = readOptionalEnv("TWILIO_TO_NUMBER") ?? readOptionalEnv("TWILIO_DEFAULT_TO_NUMBER");
+  const twilioProvided = [twilioAccountSid, twilioAuthToken, twilioFromNumber, twilioToNumber].some(Boolean);
+  const twilioMissing: string[] = [];
+  if (twilioProvided) {
+    if (!twilioAccountSid) {
+      twilioMissing.push("TWILIO_ACCOUNT_SID");
+    }
+    if (!twilioAuthToken) {
+      twilioMissing.push("TWILIO_AUTH_TOKEN");
+    }
+    if (!twilioFromNumber) {
+      twilioMissing.push("TWILIO_FROM_NUMBER");
+    }
+    if (!twilioToNumber) {
+      twilioMissing.push("TWILIO_TO_NUMBER(or TWILIO_DEFAULT_TO_NUMBER)");
+    }
+  }
+  if (twilioMissing.length > 0) {
+    throw new Error(`--call Twilio config is incomplete: missing ${twilioMissing.join(", ")}`);
+  }
+
+  const aliyunAccessKeyId = readOptionalEnv("ALIYUN_ACCESS_KEY_ID");
+  const aliyunAccessKeySecret = readOptionalEnv("ALIYUN_ACCESS_KEY_SECRET");
+  const aliyunCalledShowNumber = readOptionalEnv("ALIYUN_CALLED_SHOW_NUMBER");
+  const aliyunCalledNumber = readOptionalEnv("ALIYUN_CALLED_NUMBER");
+  const aliyunTtsCode = readOptionalEnv("ALIYUN_TTS_CODE");
+  const aliyunEndpoint = readOptionalEnv("ALIYUN_ENDPOINT");
+  const aliyunProvided = [
+    aliyunAccessKeyId,
+    aliyunAccessKeySecret,
+    aliyunCalledShowNumber,
+    aliyunCalledNumber,
+    aliyunTtsCode,
+  ].some(Boolean);
+  const aliyunMissing: string[] = [];
+  if (aliyunProvided) {
+    if (!aliyunAccessKeyId) {
+      aliyunMissing.push("ALIYUN_ACCESS_KEY_ID");
+    }
+    if (!aliyunAccessKeySecret) {
+      aliyunMissing.push("ALIYUN_ACCESS_KEY_SECRET");
+    }
+    if (!aliyunCalledShowNumber) {
+      aliyunMissing.push("ALIYUN_CALLED_SHOW_NUMBER");
+    }
+    if (!aliyunCalledNumber) {
+      aliyunMissing.push("ALIYUN_CALLED_NUMBER");
+    }
+    if (!aliyunTtsCode) {
+      aliyunMissing.push("ALIYUN_TTS_CODE");
+    }
+  }
+  if (aliyunMissing.length > 0) {
+    throw new Error(`--call Aliyun config is incomplete: missing ${aliyunMissing.join(", ")}`);
+  }
+
+  if (!twilioProvided && !aliyunProvided) {
+    throw new Error("--call requires Twilio or Aliyun credentials (TWILIO_* / ALIYUN_*)");
+  }
+
+  const telegramBotToken = readOptionalEnv("TELEGRAM_BOT_TOKEN");
+  const telegramChatId = readOptionalEnv("TELEGRAM_CHAT_ID");
+  const telegramProvided = Boolean(telegramBotToken || telegramChatId);
+  if (telegramProvided && (!telegramBotToken || !telegramChatId)) {
+    throw new Error("--call Telegram fallback requires both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID");
+  }
+
+  const voiceOrchestrator = new VoiceDeliveryOrchestrator({
+    ...(telegramProvided
+      ? {
+          telegram: {
+            botToken: telegramBotToken!,
+            chatId: telegramChatId!,
+          },
+        }
+      : {}),
+    ...(twilioProvided
+      ? {
+          twilio: {
+            accountSid: twilioAccountSid!,
+            authToken: twilioAuthToken!,
+            fromNumber: twilioFromNumber!,
+            defaultToNumber: twilioToNumber!,
+          },
+        }
+      : {}),
+    ...(aliyunProvided
+      ? {
+          aliyun: {
+            accessKeyId: aliyunAccessKeyId!,
+            accessKeySecret: aliyunAccessKeySecret!,
+            calledShowNumber: aliyunCalledShowNumber!,
+            defaultCalledNumber: aliyunCalledNumber!,
+            ttsCode: aliyunTtsCode!,
+            ...(aliyunEndpoint ? { endpoint: aliyunEndpoint } : {}),
+          },
+        }
+      : {}),
+  });
+
+  runtime.deliveryExecutor = {
+    voiceOrchestrator,
+    ...(telegramProvided
+      ? {
+          telegramSender: new TelegramVoiceSender({
+            botToken: telegramBotToken!,
+            chatId: telegramChatId!,
+          }),
+        }
+      : {}),
+  };
+  runtime.callProviders = [
+    ...(twilioProvided ? ["twilio"] : []),
+    ...(aliyunProvided ? ["aliyun"] : []),
+  ];
+  return runtime;
+}
+
 function resolveLiveContext(
   scenarios: LoadedDemoScenario[],
 ): Pick<LoadedDemoScenario, "userContext" | "policyConfig"> {
-  const preferred = scenarios.find((scenario) => scenario.name === LIVE_CONTEXT_SCENARIO);
+  const preferred = scenarios.find((scenario) => scenario.name === SEND_FIXTURE_SCENARIO);
   if (preferred) {
     return {
       userContext: preferred.userContext,
@@ -256,10 +401,14 @@ async function runLoopScenario(
 async function main(): Promise<void> {
   console.log("Personal Butler — Living Assistant Demo");
   const cli = parseCliOptions();
-  console.log(`Mode: source=${cli.live ? "live" : "fixture"}, execution=${cli.send ? "send" : "dry-run"}`);
+  const executionMode = cli.send ? "send" : cli.call ? "call" : "dry-run";
+  console.log(`Mode: source=${cli.live ? "live" : "fixture"}, execution=${executionMode}`);
 
   const demoMode = cli.dryRun;
-  const runtime = cli.send ? buildSendRuntime() : {};
+  const runtime = cli.send ? buildSendRuntime() : cli.call ? buildCallRuntime() : {};
+  if (cli.call && runtime.callProviders) {
+    console.log(`Call channels: ${runtime.callProviders.join(" -> ")} (Twilio has priority when both exist)`);
+  }
   const outputDir = runtime.ttsProvider ? path.resolve(process.cwd(), "demo-output") : undefined;
   if (outputDir) {
     fs.mkdirSync(outputDir, { recursive: true });
@@ -298,11 +447,16 @@ async function main(): Promise<void> {
     }));
   } else {
     runScenarios = cli.send
-      ? scenarios.filter((scenario) => scenario.name === LIVE_CONTEXT_SCENARIO)
-      : scenarios;
+      ? scenarios.filter((scenario) => scenario.name === SEND_FIXTURE_SCENARIO)
+      : cli.call
+        ? scenarios.filter((scenario) => scenario.name === CALL_FIXTURE_SCENARIO)
+        : scenarios;
 
     if (cli.send && runScenarios.length !== 1) {
-      throw new Error(`--send in fixture mode requires scenario fixture: ${LIVE_CONTEXT_SCENARIO}`);
+      throw new Error(`--send in fixture mode requires scenario fixture: ${SEND_FIXTURE_SCENARIO}`);
+    }
+    if (cli.call && runScenarios.length !== 1) {
+      throw new Error(`--call in fixture mode requires scenario fixture: ${CALL_FIXTURE_SCENARIO}`);
     }
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AttentionLevel, ContactDecision } from "../src/skills/alphaos/living-assistant/contact-policy";
 import { executeDelivery } from "../src/skills/alphaos/living-assistant/delivery/delivery-executor";
 import type { TelegramVoiceSender } from "../src/skills/alphaos/living-assistant/delivery/telegram-voice-sender";
+import type { VoiceDeliveryOrchestrator } from "../src/skills/alphaos/living-assistant/delivery/voice-orchestrator";
 import type { TTSResult } from "../src/skills/alphaos/living-assistant/tts";
 import type { VoiceBrief } from "../src/skills/alphaos/living-assistant/voice-brief";
 
@@ -159,6 +160,85 @@ describe("living assistant delivery executor", () => {
     expect(result.sent).toBe(true);
     expect(result.voiceResult?.messageId).toBe(21);
     expect(result.textResult?.messageId).toBe(22);
+  });
+
+  it("uses voice orchestrator for call_escalation when configured", async () => {
+    const { sender, mocks } = buildSender();
+    const brief = buildBrief();
+    const audio = buildAudio();
+    const deliver = vi.fn().mockResolvedValue([
+      {
+        channel: "twilio",
+        ok: true,
+        detail: {
+          ok: true,
+          callSid: "CA001",
+        },
+      },
+      {
+        channel: "aliyun",
+        ok: false,
+        detail: {
+          ok: false,
+          error: "template not approved",
+        },
+      },
+    ]);
+    const voiceOrchestrator = {
+      deliver,
+    } as unknown as VoiceDeliveryOrchestrator;
+
+    const result = await executeDelivery(buildDecision("call_escalation"), brief, audio, {
+      telegramSender: sender,
+      voiceOrchestrator,
+    });
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver).toHaveBeenCalledWith("call_escalation", {
+      text: brief.text,
+      audio: audio.audio,
+      audioFormat: audio.format,
+    });
+    expect(mocks.sendText).not.toHaveBeenCalled();
+    expect(mocks.sendVoice).not.toHaveBeenCalled();
+    expect(mocks.sendVoiceWithFollowUp).not.toHaveBeenCalled();
+    expect(result.channel).toBe("twilio");
+    expect(result.sent).toBe(true);
+    expect(result.dryRun).toBe(false);
+    expect(result.orchestratorResults).toHaveLength(2);
+  });
+
+  it("returns combined errors when all orchestrator channels fail", async () => {
+    const deliver = vi.fn().mockResolvedValue([
+      {
+        channel: "twilio",
+        ok: false,
+        detail: {
+          ok: false,
+          error: "twilio rejected number",
+        },
+      },
+      {
+        channel: "aliyun",
+        ok: false,
+        detail: {
+          ok: false,
+          error: "aliyun template missing",
+        },
+      },
+    ]);
+    const voiceOrchestrator = {
+      deliver,
+    } as unknown as VoiceDeliveryOrchestrator;
+
+    const result = await executeDelivery(buildDecision("call_escalation"), buildBrief(), buildAudio(), {
+      voiceOrchestrator,
+    });
+
+    expect(result.sent).toBe(false);
+    expect(result.channel).toBe("twilio");
+    expect(result.error).toContain("twilio: twilio rejected number");
+    expect(result.error).toContain("aliyun: aliyun template missing");
   });
 
   it("does not send for silent/digest decisions", async () => {
