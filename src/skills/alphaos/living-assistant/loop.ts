@@ -32,6 +32,13 @@ export interface LivingAssistantLoopOutput {
   delivered: boolean;
   deliveryChannel?: ContactChannel;
   demoMode: boolean;
+  timings: {
+    policyMs: number;
+    briefMs: number;
+    ttsMs: number;
+    deliveryMs: number;
+    totalMs: number;
+  };
   loopCompletedAt: string;
 }
 
@@ -51,8 +58,13 @@ function shouldGenerateBrief(attentionLevel: AttentionLevel): boolean {
 export async function runLivingAssistantLoop(
   input: LivingAssistantLoopInput,
 ): Promise<LivingAssistantLoopOutput> {
-  const decision = evaluateContactPolicy(input.signal, input.userContext, input.policyConfig);
+  const loopStart = performance.now();
 
+  const policyStart = performance.now();
+  const decision = evaluateContactPolicy(input.signal, input.userContext, input.policyConfig);
+  const policyMs = performance.now() - policyStart;
+
+  const briefStart = performance.now();
   const brief = shouldGenerateBrief(decision.attentionLevel)
     ? generateVoiceBrief(
         input.signal,
@@ -60,23 +72,33 @@ export async function runLivingAssistantLoop(
         input.briefProtocol ? { protocol: input.briefProtocol } : undefined,
       )
     : undefined;
+  const briefMs = performance.now() - briefStart;
 
   const deliveryChannel = decision.channels[0];
   const demoMode = Boolean(input.demoMode);
   let audio: TTSResult | undefined;
   let delivery: DeliveryResult | undefined;
+  let ttsMs = 0;
+  let deliveryMs = 0;
 
   if (brief && input.ttsProvider) {
+    const ttsStart = performance.now();
     try {
       audio = await input.ttsProvider.synthesize(brief.text, input.ttsOptions);
     } catch {
       audio = undefined;
+    } finally {
+      ttsMs = performance.now() - ttsStart;
     }
   }
 
   if (!demoMode && input.deliveryExecutor) {
+    const deliveryStart = performance.now();
     delivery = await executeDelivery(decision, brief, audio, input.deliveryExecutor);
+    deliveryMs = performance.now() - deliveryStart;
   }
+
+  const totalMs = performance.now() - loopStart;
 
   return {
     signal: input.signal,
@@ -87,6 +109,13 @@ export async function runLivingAssistantLoop(
     delivered: demoMode ? false : Boolean(delivery?.sent),
     deliveryChannel,
     demoMode,
+    timings: {
+      policyMs,
+      briefMs,
+      ttsMs,
+      deliveryMs,
+      totalMs,
+    },
     loopCompletedAt: new Date().toISOString(),
   };
 }
