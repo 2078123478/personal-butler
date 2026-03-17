@@ -1,0 +1,32 @@
+{
+  "name": "proactive-arbitrage-alert",
+  "description": "High-confidence arbitrage path should generate an active brief and proactive outreach.",
+  "signal": {
+    "signalId": "scenario-proactive-arb-1",
+    "source": "market_opportunity",
+    "type": "spread_detected",
+    "title": "Arbitrage path detected for ETH/USDC",
+    "body": "Spread and confidence exceeded active strategy thresholds.",
+    "urgency": "high",
+    "relevanceHint": "likely_relevant",
+    "pair": "ETH/USDC",
+    "detectedAt": "2026-03-17T09:12:00.000Z",
+    "metadata": {
+      "strategyId": "spread-threshold",
+      "expectedNetUsd": 14.2,
+      "confidence": 0.89
+    }
+  },
+  "userContext": {
+    "localHour": 15,
+    "recentContactCount": 0,
+    "activeStrategies": ["spread-threshold"],
+    "watchlist": ["ETH/USDC"],
+    "riskTolerance": "moderate",
+    "quietHoursStart": 23,
+    "quietHoursEnd": 8,
+    "maxDailyContacts": 12
+  },
+  "expectedAttentionLevel": "voice_brief",
+  "expectedBrief": true
+}

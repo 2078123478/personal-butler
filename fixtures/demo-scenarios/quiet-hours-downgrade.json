@@ -1,0 +1,31 @@
+{
+  "name": "quiet-hours-downgrade",
+  "description": "Relevant signal during quiet hours should be downgraded to digest delivery.",
+  "signal": {
+    "signalId": "scenario-quiet-hours-1",
+    "source": "binance_announcement",
+    "type": "new_listing",
+    "title": "Listing update for ETH ecosystem pair",
+    "body": "New trading window published for ETH/USDC.",
+    "urgency": "high",
+    "relevanceHint": "likely_relevant",
+    "pair": "ETH/USDC",
+    "detectedAt": "2026-03-17T01:20:00.000Z"
+  },
+  "userContext": {
+    "localHour": 2,
+    "recentContactCount": 0,
+    "activeStrategies": ["spread-threshold"],
+    "watchlist": ["ETH/USDC"],
+    "riskTolerance": "moderate",
+    "quietHoursStart": 23,
+    "quietHoursEnd": 8,
+    "maxDailyContacts": 10
+  },
+  "policyConfig": {
+    "quietHoursStart": 23,
+    "quietHoursEnd": 8
+  },
+  "expectedAttentionLevel": "digest",
+  "expectedBrief": false
+}

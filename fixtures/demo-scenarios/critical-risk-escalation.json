@@ -1,0 +1,28 @@
+{
+  "name": "critical-risk-escalation",
+  "description": "Critical risk signal should escalate to strong interruption or call escalation behavior.",
+  "signal": {
+    "signalId": "scenario-critical-risk-1",
+    "source": "token_risk_change",
+    "type": "risk_alert",
+    "title": "Critical risk shift on watched token",
+    "body": "Privileged owner action detected with exploit-like pattern.",
+    "urgency": "critical",
+    "relevanceHint": "likely_relevant",
+    "tokenAddress": "0x1111111111111111111111111111111111111111",
+    "chainId": 1,
+    "detectedAt": "2026-03-17T11:45:00.000Z"
+  },
+  "userContext": {
+    "localHour": 11,
+    "recentContactCount": 1,
+    "activeStrategies": ["risk-monitor"],
+    "watchlist": ["0x1111111111111111111111111111111111111111"],
+    "riskTolerance": "conservative",
+    "quietHoursStart": 23,
+    "quietHoursEnd": 8,
+    "maxDailyContacts": 12
+  },
+  "expectedAttentionLevel": "call_escalation",
+  "expectedBrief": true
+}

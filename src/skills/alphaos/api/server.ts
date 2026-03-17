@@ -1,9 +1,19 @@
 import express from "express";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { ZodError } from "zod";
 import type { AlphaEngine } from "../engine/alpha-engine";
 import type { AlphaOsConfig } from "../runtime/config";
 import { OnchainOsClient } from "../runtime/onchainos-client";
+import {
+  defaultContactPolicyConfig,
+  type AttentionLevel,
+  type ContactPolicyConfig,
+  type UserContext,
+} from "../living-assistant/contact-policy";
+import { runLivingAssistantLoop } from "../living-assistant/loop";
+import { normalizeSignal, type NormalizedSignal, type SignalUrgency } from "../living-assistant/signal-radar";
 import {
   getNetworkProfileReadinessSnapshot,
   probeNetworkProfileReadiness,
@@ -1554,6 +1564,205 @@ function demoHtml(): string {
 </html>`;
 }
 
+const livingAssistantAttentionLevels = [
+  "silent",
+  "digest",
+  "text_nudge",
+  "voice_brief",
+  "strong_interrupt",
+  "call_escalation",
+] as const satisfies readonly AttentionLevel[];
+
+const livingAssistantUrgencies = ["low", "medium", "high", "critical"] as const satisfies readonly SignalUrgency[];
+
+const defaultLivingAssistantRiskTolerance: UserContext["riskTolerance"] = "moderate";
+
+interface LivingAssistantDemoScenario {
+  name: string;
+  description: string;
+  signal: NormalizedSignal;
+  userContext: UserContext;
+  policyConfig?: Partial<ContactPolicyConfig>;
+  expectedAttentionLevel: AttentionLevel;
+  expectedBrief: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toBoundedInteger(input: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(input ?? fallback);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function toOptionalBoundedInteger(input: unknown, min: number, max: number): number | undefined {
+  if (input === undefined || input === null || input === "") {
+    return undefined;
+  }
+  const parsed = Number(input);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function toStringArray(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function toRiskTolerance(input: unknown): UserContext["riskTolerance"] {
+  const value = readTrimmedString(input).toLowerCase();
+  if (value === "conservative" || value === "aggressive" || value === "moderate") {
+    return value;
+  }
+  return defaultLivingAssistantRiskTolerance;
+}
+
+function toSignalUrgency(input: unknown, fallback: SignalUrgency): SignalUrgency {
+  const value = readTrimmedString(input);
+  if (isAllowedValue(value, livingAssistantUrgencies)) {
+    return value;
+  }
+  return fallback;
+}
+
+function toAttentionLevel(input: unknown): AttentionLevel | undefined {
+  const value = readTrimmedString(input);
+  if (!value) {
+    return undefined;
+  }
+  if (isAllowedValue(value, livingAssistantAttentionLevels)) {
+    return value;
+  }
+  return undefined;
+}
+
+function toLivingAssistantUserContext(input: unknown): UserContext {
+  const payload = isRecord(input) ? input : {};
+  const quietHoursStart = toOptionalBoundedInteger(payload.quietHoursStart, 0, 23);
+  const quietHoursEnd = toOptionalBoundedInteger(payload.quietHoursEnd, 0, 23);
+  const maxDailyContacts = toOptionalBoundedInteger(payload.maxDailyContacts, 1, 10_000);
+
+  return {
+    localHour: toBoundedInteger(payload.localHour, new Date().getHours(), 0, 23),
+    recentContactCount: toBoundedInteger(payload.recentContactCount, 0, 0, 10_000),
+    activeStrategies: toStringArray(payload.activeStrategies),
+    watchlist: toStringArray(payload.watchlist),
+    riskTolerance: toRiskTolerance(payload.riskTolerance),
+    ...(quietHoursStart !== undefined ? { quietHoursStart } : {}),
+    ...(quietHoursEnd !== undefined ? { quietHoursEnd } : {}),
+    ...(maxDailyContacts !== undefined ? { maxDailyContacts } : {}),
+  };
+}
+
+function mergeLivingAssistantPolicyConfig(input: unknown): ContactPolicyConfig {
+  const payload = isRecord(input) ? input : {};
+
+  return {
+    ...defaultContactPolicyConfig,
+    quietHoursStart: toBoundedInteger(payload.quietHoursStart, defaultContactPolicyConfig.quietHoursStart, 0, 23),
+    quietHoursEnd: toBoundedInteger(payload.quietHoursEnd, defaultContactPolicyConfig.quietHoursEnd, 0, 23),
+    maxContactsPerHour: toBoundedInteger(
+      payload.maxContactsPerHour,
+      defaultContactPolicyConfig.maxContactsPerHour,
+      1,
+      10_000,
+    ),
+    maxContactsPerDay: toBoundedInteger(
+      payload.maxContactsPerDay,
+      defaultContactPolicyConfig.maxContactsPerDay,
+      1,
+      10_000,
+    ),
+    minSignalUrgencyForVoice: toSignalUrgency(
+      payload.minSignalUrgencyForVoice,
+      defaultContactPolicyConfig.minSignalUrgencyForVoice,
+    ),
+    minSignalUrgencyForCallEscalation: toSignalUrgency(
+      payload.minSignalUrgencyForCallEscalation,
+      defaultContactPolicyConfig.minSignalUrgencyForCallEscalation,
+    ),
+    allowVoiceBrief:
+      typeof payload.allowVoiceBrief === "boolean"
+        ? payload.allowVoiceBrief
+        : defaultContactPolicyConfig.allowVoiceBrief,
+    allowCallEscalation:
+      typeof payload.allowCallEscalation === "boolean"
+        ? payload.allowCallEscalation
+        : defaultContactPolicyConfig.allowCallEscalation,
+    digestWindowMinutes: toBoundedInteger(
+      payload.digestWindowMinutes,
+      defaultContactPolicyConfig.digestWindowMinutes,
+      1,
+      1440,
+    ),
+  };
+}
+
+function listLivingAssistantCapsules(
+  fixtureDir = path.resolve(process.cwd(), "fixtures", "signal-capsules"),
+): string[] {
+  if (!fs.existsSync(fixtureDir)) {
+    return [];
+  }
+  return fs
+    .readdirSync(fixtureDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function loadLivingAssistantDemoScenario(
+  scenarioName: string,
+  fixtureDir = path.resolve(process.cwd(), "fixtures", "demo-scenarios"),
+): LivingAssistantDemoScenario {
+  const normalizedName = scenarioName.trim();
+  if (!/^[a-z0-9-]+$/i.test(normalizedName)) {
+    throw new Error("invalid scenario name");
+  }
+
+  const scenarioPath = path.resolve(fixtureDir, `${normalizedName}.json`);
+  const scenarioRoot = path.resolve(fixtureDir);
+  const expectedPrefix = `${scenarioRoot}${path.sep}`;
+  if (scenarioPath !== scenarioRoot && !scenarioPath.startsWith(expectedPrefix)) {
+    throw new Error("invalid scenario path");
+  }
+
+  const raw = fs.readFileSync(scenarioPath, "utf8");
+  const parsed = JSON.parse(raw) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error("invalid scenario payload");
+  }
+
+  const expectedAttentionLevel = toAttentionLevel(parsed.expectedAttentionLevel);
+  if (!expectedAttentionLevel) {
+    throw new Error("invalid expectedAttentionLevel");
+  }
+  if (typeof parsed.expectedBrief !== "boolean") {
+    throw new Error("invalid expectedBrief");
+  }
+
+  return {
+    name: readTrimmedString(parsed.name) || normalizedName,
+    description: readTrimmedString(parsed.description),
+    signal: normalizeSignal(parsed.signal as never),
+    userContext: toLivingAssistantUserContext(parsed.userContext),
+    policyConfig: isRecord(parsed.policyConfig) ? parsed.policyConfig as Partial<ContactPolicyConfig> : undefined,
+    expectedAttentionLevel,
+    expectedBrief: parsed.expectedBrief,
+  };
+}
+
 export function createServer(
   engine: AlphaEngine,
   store: StateStore,
@@ -1745,6 +1954,68 @@ export function createServer(
   });
 
   app.use("/api/v1", requireApiAuth);
+
+  app.post("/api/v1/living-assistant/evaluate", (req, res) => {
+    const payload = isRecord(req.body) ? req.body : {};
+    if (!("signal" in payload)) {
+      res.status(400).json({ error: "signal is required" });
+      return;
+    }
+
+    let signal: NormalizedSignal;
+    try {
+      signal = normalizeSignal(payload.signal as never);
+    } catch (error) {
+      res.status(400).json({
+        error: "invalid signal payload",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    const userContext = toLivingAssistantUserContext(payload.userContext);
+    const policyConfig = mergeLivingAssistantPolicyConfig(payload.policyConfig);
+    const demoMode = typeof payload.demoMode === "boolean" ? payload.demoMode : true;
+
+    res.json(runLivingAssistantLoop({
+      signal,
+      userContext,
+      policyConfig,
+      demoMode,
+    }));
+  });
+
+  app.get("/api/v1/living-assistant/demo/:scenarioName", (req, res) => {
+    const scenarioName = String(req.params.scenarioName ?? "").trim();
+    if (!scenarioName) {
+      res.status(400).json({ error: "scenarioName is required" });
+      return;
+    }
+
+    try {
+      const scenario = loadLivingAssistantDemoScenario(scenarioName);
+      const policyConfig = mergeLivingAssistantPolicyConfig(scenario.policyConfig);
+      res.json(
+        runLivingAssistantLoop({
+          signal: scenario.signal,
+          userContext: scenario.userContext,
+          policyConfig,
+          demoMode: true,
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        res.status(404).json({ error: "scenario not found" });
+        return;
+      }
+      res.status(400).json({ error: "invalid scenario", detail: message });
+    }
+  });
+
+  app.get("/api/v1/living-assistant/capsules", (_req, res) => {
+    res.json({ items: listLivingAssistantCapsules() });
+  });
 
   const respondDiscoveryUnavailable = (res: express.Response) => {
     res.status(503).json({ error: "discovery engine unavailable" });
