@@ -3,10 +3,103 @@ import { CosyVoiceTTSProvider } from "../src/skills/alphaos/living-assistant/tts
 import { createTTSProvider } from "../src/skills/alphaos/living-assistant/tts/provider-factory";
 import type { TTSProviderConfig } from "../src/skills/alphaos/living-assistant/tts/types";
 
-const originalFetch = globalThis.fetch;
+const wsState = vi.hoisted(() => {
+  const instances: unknown[] = [];
+
+  class HoistedMockWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+
+    public readonly endpoint: string;
+    public readonly options?: { headers?: Record<string, string> };
+    public readonly sentFrames: string[] = [];
+    public readyState = HoistedMockWebSocket.CONNECTING;
+
+    private readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+
+    constructor(endpoint: string, options?: { headers?: Record<string, string> }) {
+      this.endpoint = endpoint;
+      this.options = options;
+      instances.push(this);
+    }
+
+    on(event: string, listener: (...args: unknown[]) => void): this {
+      const handlers = this.listeners.get(event) ?? [];
+      handlers.push(listener);
+      this.listeners.set(event, handlers);
+      return this;
+    }
+
+    removeAllListeners(): this {
+      this.listeners.clear();
+      return this;
+    }
+
+    send(data: string | Buffer) {
+      this.sentFrames.push(typeof data === "string" ? data : data.toString("utf8"));
+    }
+
+    close(code = 1000, reason = "") {
+      this.readyState = HoistedMockWebSocket.CLOSED;
+      this.emit("close", code, Buffer.from(reason));
+    }
+
+    triggerOpen() {
+      this.readyState = HoistedMockWebSocket.OPEN;
+      this.emit("open");
+    }
+
+    triggerJson(payload: unknown) {
+      this.emit("message", JSON.stringify(payload), false);
+    }
+
+    triggerAudio(chunk: Buffer) {
+      this.emit("message", chunk, true);
+    }
+
+    triggerError(message: string) {
+      this.emit("error", new Error(message));
+    }
+
+    private emit(event: string, ...args: unknown[]) {
+      const handlers = this.listeners.get(event) ?? [];
+      for (const handler of handlers) {
+        handler(...args);
+      }
+    }
+  }
+
+  return {
+    instances,
+    MockWebSocket: HoistedMockWebSocket,
+  };
+});
+
+vi.mock("ws", () => ({ default: wsState.MockWebSocket }));
+
+type MockWebSocket = InstanceType<typeof wsState.MockWebSocket>;
+
+function lastSocket(): MockWebSocket {
+  const socket = wsState.instances.at(-1) as MockWebSocket | undefined;
+  if (!socket) {
+    throw new Error("No websocket instance created");
+  }
+  return socket;
+}
+
+function frameAt(socket: MockWebSocket, index: number): Record<string, unknown> {
+  const raw = socket.sentFrames[index];
+  if (!raw) {
+    throw new Error(`Missing frame at index ${index}`);
+  }
+  return JSON.parse(raw) as Record<string, unknown>;
+}
 
 afterEach(() => {
-  globalThis.fetch = originalFetch;
+  wsState.instances.length = 0;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -16,7 +109,7 @@ describe("living assistant cosyvoice tts", () => {
       type: "cosyvoice",
       apiKey: "dash-test",
       model: "cosyvoice-v2",
-      defaultVoice: "longxiaochun",
+      defaultVoice: "longxiaochun_v2",
     } satisfies TTSProviderConfig;
 
     expect(config.type).toBe("cosyvoice");
@@ -33,128 +126,133 @@ describe("living assistant cosyvoice tts", () => {
     expect(provider.name).toBe("cosyvoice");
   });
 
-  it("cosyvoice provider sends preset voices as input.voice", async () => {
-    const mockFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async () =>
-        new Response(
-          JSON.stringify({
-            output: {
-              audio: {
-                url: "https://cdn.example.com/cosyvoice.wav",
-              },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-    );
-    globalThis.fetch = mockFetch as unknown as typeof fetch;
-
+  it("runs websocket duplex flow and concatenates binary chunks", async () => {
     const provider = createTTSProvider({
       type: "cosyvoice",
       apiKey: "dash-key",
-      endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation/",
+      endpoint: "wss://dashscope.aliyuncs.com/api-ws/v1/inference/",
       model: "cosyvoice-v2",
-      defaultVoice: "longxiaochun",
+      defaultVoice: "longxiaochun_v2",
     });
 
-    const result = await provider.synthesize("Status update for you", {
-      voice: "longwan",
+    const synthesizePromise = provider.synthesize("Status update for you", {
+      voice: "longwan_v2",
+      format: "wav",
+      speed: 1.25,
     });
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [requestUrl, requestInit] = mockFetch.mock.calls[0];
-    expect(String(requestUrl)).toBe(
-      "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-    );
-    expect(requestInit?.method).toBe("POST");
+    const socket = lastSocket();
+    expect(socket.endpoint).toBe("wss://dashscope.aliyuncs.com/api-ws/v1/inference/");
+    expect(socket.options?.headers?.Authorization).toBe("bearer dash-key");
 
-    const headers = requestInit?.headers as Record<string, string>;
-    expect(headers.Authorization).toBe("Bearer dash-key");
-    expect(headers["Content-Type"]).toBe("application/json");
+    socket.triggerOpen();
+    expect(socket.sentFrames).toHaveLength(1);
 
-    expect(JSON.parse(String(requestInit?.body))).toEqual({
-      model: "cosyvoice-v2",
-      input: {
-        text: "Status update for you",
-        voice: "longwan",
-      },
+    const runTask = frameAt(socket, 0);
+    const runHeader = runTask.header as Record<string, unknown>;
+    const runPayload = runTask.payload as Record<string, unknown>;
+    const runParameters = runPayload.parameters as Record<string, unknown>;
+    expect(runHeader.action).toBe("run-task");
+    expect(runHeader.streaming).toBe("duplex");
+    expect(runPayload.model).toBe("cosyvoice-v2");
+    expect(runParameters.voice).toBe("longwan_v2");
+    expect(runParameters.format).toBe("wav");
+    expect(runParameters.rate).toBe(1.25);
+    expect(runParameters.sample_rate).toBe(22050);
+
+    socket.triggerJson({
+      header: { event: "task-started" },
+    });
+    expect(socket.sentFrames).toHaveLength(3);
+
+    const continueTask = frameAt(socket, 1);
+    const continueHeader = continueTask.header as Record<string, unknown>;
+    const continuePayload = continueTask.payload as Record<string, unknown>;
+    const continueInput = continuePayload.input as Record<string, unknown>;
+    expect(continueHeader.action).toBe("continue-task");
+    expect(continueHeader.task_id).toBe(runHeader.task_id);
+    expect(continueInput.text).toBe("Status update for you");
+
+    const finishTask = frameAt(socket, 2);
+    const finishHeader = finishTask.header as Record<string, unknown>;
+    expect(finishHeader.action).toBe("finish-task");
+    expect(finishHeader.task_id).toBe(runHeader.task_id);
+
+    socket.triggerAudio(Buffer.from([0x01, 0x02, 0x03]));
+    socket.triggerAudio(Buffer.from([0x04, 0x05]));
+    socket.triggerJson({
+      header: { event: "task-finished" },
     });
 
-    expect(result.audio).toBeUndefined();
-    expect(result.audioUrl).toBe("https://cdn.example.com/cosyvoice.wav");
-    expect(result.format).toBe("wav");
-    expect(result.durationSeconds).toBe(0);
-    expect(result.provider).toBe("cosyvoice");
-  });
-
-  it("cosyvoice provider sends reference audio URL as input.reference_audio", async () => {
-    const audioBytes = Buffer.alloc(2_000, 1);
-    const mockFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async () =>
-        new Response(
-          JSON.stringify({
-            output: {
-              audio: {
-                data: audioBytes.toString("base64"),
-              },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-    );
-    globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-    const provider = createTTSProvider({
-      type: "cosyvoice",
-      apiKey: "dash-key",
-    });
-
-    const result = await provider.synthesize("Status update for you", {
-      voice: "https://example.com/reference-voice.wav",
-    });
-
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [, requestInit] = mockFetch.mock.calls[0];
-
-    expect(JSON.parse(String(requestInit?.body))).toEqual({
-      model: "cosyvoice-v2",
-      input: {
-        text: "Status update for you",
-        reference_audio: "https://example.com/reference-voice.wav",
-      },
-    });
-
-    expect(result.audioUrl).toBeUndefined();
+    const result = await synthesizePromise;
     expect(result.audio).toBeDefined();
-    expect(result.audio?.byteLength).toBe(audioBytes.byteLength);
+    expect(result.audio?.equals(Buffer.from([0x01, 0x02, 0x03, 0x04, 0x05]))).toBe(true);
+    expect(result.audioUrl).toBeUndefined();
     expect(result.format).toBe("wav");
-    expect(result.durationSeconds).toBe(1);
     expect(result.provider).toBe("cosyvoice");
   });
 
-  it("cosyvoice provider surfaces HTTP errors with provider name and status", async () => {
-    const mockFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async () =>
-        new Response(
-          JSON.stringify({
-            code: "InvalidApiKey",
-            message: "Access denied due to invalid key.",
-          }),
-          {
-            status: 401,
-            statusText: "Unauthorized",
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
-    );
-    globalThis.fetch = mockFetch as unknown as typeof fetch;
+  it("rejects reference-audio URL voice values", async () => {
+    const provider = createTTSProvider({
+      type: "cosyvoice",
+      apiKey: "dash-key",
+    });
 
+    await expect(
+      provider.synthesize("hello world", {
+        voice: "https://example.com/reference-voice.wav",
+      }),
+    ).rejects.toThrow(/voice cloning API/i);
+    expect(wsState.instances).toHaveLength(0);
+  });
+
+  it("surfaces task-failed event errors", async () => {
     const provider = createTTSProvider({
       type: "cosyvoice",
       apiKey: "bad-key",
     });
+    const synthesizePromise = provider.synthesize("hello world");
+    const socket = lastSocket();
 
-    await expect(provider.synthesize("hello world")).rejects.toThrow(/cosyvoice/i);
-    await expect(provider.synthesize("hello world")).rejects.toThrow(/401/);
+    socket.triggerOpen();
+    socket.triggerJson({
+      header: { event: "task-started" },
+    });
+    socket.triggerJson({
+      header: { event: "task-failed" },
+      payload: { message: "Access denied due to invalid key." },
+    });
+
+    await expect(synthesizePromise).rejects.toThrow(/task failed/i);
+    await expect(synthesizePromise).rejects.toThrow(/invalid key/i);
+  });
+
+  it("surfaces websocket connection errors", async () => {
+    const provider = createTTSProvider({
+      type: "cosyvoice",
+      apiKey: "dash-key",
+    });
+    const synthesizePromise = provider.synthesize("hello world");
+    const socket = lastSocket();
+
+    socket.triggerError("network broken");
+    await expect(synthesizePromise).rejects.toThrow(/connection error/i);
+    await expect(synthesizePromise).rejects.toThrow(/network broken/i);
+  });
+
+  it("times out after 30 seconds", async () => {
+    vi.useFakeTimers();
+
+    const provider = createTTSProvider({
+      type: "cosyvoice",
+      apiKey: "dash-key",
+    });
+    const p = provider.synthesize("hello world");
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(p).rejects.toThrow(/timed out/i);
+    vi.useRealTimers();
+    vi.runAllTimers(); // flush any remaining callbacks to prevent unhandled rejection after test exits
   });
 });
