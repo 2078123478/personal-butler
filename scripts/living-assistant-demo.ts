@@ -247,12 +247,12 @@ function readTTSProviderType(env: NodeJS.ProcessEnv = process.env): TTSProviderC
     return "openai-compatible";
   }
 
-  if (raw === "openai-compatible" || raw === "dashscope-qwen") {
+  if (raw === "openai-compatible" || raw === "dashscope-qwen" || raw === "cosyvoice") {
     return raw;
   }
 
   throw new Error(
-    `Unsupported TTS_PROVIDER: ${raw}. Supported values: openai-compatible, dashscope-qwen`,
+    `Unsupported TTS_PROVIDER: ${raw}. Supported values: openai-compatible, dashscope-qwen, cosyvoice`,
   );
 }
 
@@ -317,6 +317,30 @@ function buildOptionalTTS(env: NodeJS.ProcessEnv = process.env): DemoRuntime {
     };
   }
 
+  if (providerType === "cosyvoice") {
+    if (!apiKey) {
+      return {};
+    }
+
+    const endpoint = readOptionalEnv("TTS_DASHSCOPE_ENDPOINT", env);
+    const format = normalizeTTSFormat(readOptionalEnv("TTS_FORMAT", env), "wav");
+    return {
+      ttsProvider: createTTSProvider({
+        type: "cosyvoice",
+        apiKey,
+        ...(endpoint ? { endpoint } : {}),
+        ...(model ? { model } : {}),
+        ...(voice ? { defaultVoice: voice } : {}),
+        defaultFormat: format,
+      }),
+      ttsOptions: {
+        format,
+        ...(voice ? { voice } : {}),
+        ...(language ? { language } : {}),
+      },
+    };
+  }
+
   const baseUrl = readOptionalEnv("TTS_BASE_URL", env);
   if (!baseUrl || !apiKey) {
     return {};
@@ -344,7 +368,7 @@ function buildSendRuntime(): DemoRuntime {
   const runtime = buildOptionalTTS(process.env);
   if (!runtime.ttsProvider) {
     throw new Error(
-      "--send requires TTS provider env: openai-compatible needs TTS_BASE_URL + TTS_API_KEY, dashscope-qwen needs TTS_API_KEY",
+      "--send requires TTS provider env: openai-compatible needs TTS_BASE_URL + TTS_API_KEY, dashscope-qwen/cosyvoice need TTS_API_KEY",
     );
   }
 

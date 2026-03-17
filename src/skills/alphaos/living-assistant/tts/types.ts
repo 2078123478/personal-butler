@@ -42,4 +42,16 @@ export interface DashScopeQwenTTSProviderConfig {
   optimizeInstructions?: boolean;
 }
 
-export type TTSProviderConfig = OpenAICompatibleTTSProviderConfig | DashScopeQwenTTSProviderConfig;
+export interface CosyVoiceTTSProviderConfig {
+  type: "cosyvoice";
+  apiKey: string;
+  endpoint?: string; // e.g. 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
+  model?: string; // e.g. 'cosyvoice-v2'
+  defaultVoice?: string; // preset voice name, or reference audio URL
+  defaultFormat?: string; // metadata hint for downstream handlers, e.g. 'wav'
+}
+
+export type TTSProviderConfig =
+  | OpenAICompatibleTTSProviderConfig
+  | DashScopeQwenTTSProviderConfig
+  | CosyVoiceTTSProviderConfig;
