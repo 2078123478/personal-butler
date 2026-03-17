@@ -193,8 +193,10 @@ function createDiscoveryStub() {
   };
 
   let active: DiscoverySession | null = null;
+  const approveCalls: Array<{ sessionId: string; candidateId: string; mode: "paper" | "live" }> = [];
 
   return {
+    approveCalls,
     async startSession(input: { strategyId: string; pairs: string[] }): Promise<DiscoverySession> {
       if (active) {
         const error = new Error("active already exists");
@@ -230,6 +232,7 @@ function createDiscoveryStub() {
       return session;
     },
     async approveCandidate(id: string, candidateId: string, mode: "paper" | "live"): Promise<DiscoveryApproveResult> {
+      approveCalls.push({ sessionId: id, candidateId, mode });
       if (id !== session.id || candidateId !== candidate.id) {
         const error = new Error("candidate not found");
         (error as { code?: string }).code = "candidate_not_found";
@@ -266,6 +269,60 @@ function createDiscoveryStub() {
         degradedToPaper: false,
         tradeId: "trade-1",
       };
+    },
+  };
+}
+
+function makeAdapterInputs() {
+  return {
+    market: {
+      spot: {
+        provider: {
+          sourceSkill: "binance/spot",
+          payload: {
+            pair: "ETH/USDC",
+            bid: 2048.1,
+            ask: 2048.6,
+            quoteTs: "2026-03-17T01:00:00.000Z",
+            chainId: 56,
+          },
+        },
+      },
+    },
+    readiness: {
+      assets: {
+        provider: {
+          sourceSkill: "binance/assets",
+          payload: {
+            accountScope: "default",
+            availableNotionalUsd: 2500,
+            requiredNotionalUsd: 1000,
+            baseAssetReady: true,
+            quoteAssetReady: true,
+          },
+        },
+      },
+    },
+    enrichment: {
+      tokenInfo: {
+        provider: {
+          sourceSkill: "binance-web3/query-token-info",
+          payload: {
+            name: "Wrapped Ether",
+            symbol: "ETH",
+            chainId: 56,
+          },
+        },
+      },
+      tokenAudit: {
+        provider: {
+          sourceSkill: "binance-web3/query-token-audit",
+          payload: {
+            tokenRisk: "normal",
+            auditFlags: [],
+          },
+        },
+      },
     },
   };
 }
@@ -376,57 +433,7 @@ describe("discovery api", () => {
       {
         candidateId: "candidate-1",
         mode: "paper",
-        adapterInputs: {
-          market: {
-            spot: {
-              provider: {
-                sourceSkill: "binance/spot",
-                payload: {
-                  pair: "ETH/USDC",
-                  bid: 2048.1,
-                  ask: 2048.6,
-                  quoteTs: "2026-03-17T01:00:00.000Z",
-                  chainId: 56,
-                },
-              },
-            },
-          },
-          readiness: {
-            assets: {
-              provider: {
-                sourceSkill: "binance/assets",
-                payload: {
-                  accountScope: "default",
-                  availableNotionalUsd: 2500,
-                  requiredNotionalUsd: 1000,
-                  baseAssetReady: true,
-                  quoteAssetReady: true,
-                },
-              },
-            },
-          },
-          enrichment: {
-            tokenInfo: {
-              provider: {
-                sourceSkill: "binance-web3/query-token-info",
-                payload: {
-                  name: "Wrapped Ether",
-                  symbol: "ETH",
-                  chainId: 56,
-                },
-              },
-            },
-            tokenAudit: {
-              provider: {
-                sourceSkill: "binance-web3/query-token-audit",
-                payload: {
-                  tokenRisk: "normal",
-                  auditFlags: [],
-                },
-              },
-            },
-          },
-        },
+        adapterInputs: makeAdapterInputs(),
       },
       auth(),
     );
@@ -463,5 +470,185 @@ describe("discovery api", () => {
     );
     expect(stop.status).toBe(200);
     expect((stop.body as { status: string }).status).toBe("stopped");
+  });
+
+  it("exposes judge-facing paper demo payload for accepted paper approval", async () => {
+    const store = setupStore();
+    const engine = {
+      getCurrentMode: () => "paper",
+      requestMode: (mode: "paper" | "live"): EngineModeResponse => ({
+        ok: true,
+        requestedMode: mode,
+        currentMode: mode,
+        reasons: [],
+      }),
+    };
+    const manifest: SkillManifest = {
+      id: "alphaos",
+      version: "0.2.0",
+      description: "test",
+      strategyIds: ["dex-arbitrage"],
+    };
+    const discovery = createDiscoveryStub();
+    const app = createServer(engine as never, store, manifest, {
+      discoveryEngine: discovery as never,
+      apiSecret: API_SECRET,
+      demoPublic: false,
+    });
+
+    await invokeApi(
+      app,
+      "POST",
+      "/api/v1/discovery/sessions/start",
+      {
+        strategyId: "spread-threshold",
+        pairs: ["eth/usdc"],
+      },
+      auth(),
+    );
+
+    const approveDemo = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/discovery/sessions/session-1/approve/paper-demo",
+      {
+        candidateId: "candidate-1",
+        mode: "paper",
+        adapterInputs: makeAdapterInputs(),
+      },
+      auth(),
+    );
+    expect(approveDemo.status).toBe(200);
+
+    const body = approveDemo.body as {
+      requestedMode: string;
+      executionMode: string;
+      effectiveMode: string;
+      modePolicy: string;
+      moduleResponse: {
+        module: string;
+      };
+      demo: {
+        flow: string;
+        demoSafe: boolean;
+        operatorSummary: string;
+        judgeSummary: string;
+        decisionSummary: {
+          decision: string;
+          reasonCodes: string[];
+          blockingReasonCodes: string[];
+        };
+        contexts: {
+          marketContext: { sourceSkill: string } | null;
+          readinessContext: { sourceSkill: string } | null;
+          enrichmentContext: { sourceSkills: string[] } | null;
+        };
+        simulationSummary: { status: string } | null;
+        executionSummary: { status: string; liveExecutionAttempted: boolean };
+      };
+    };
+    expect(body.modePolicy).toBe("paper_mode_enforced");
+    expect(body.requestedMode).toBe("paper");
+    expect(body.executionMode).toBe("paper");
+    expect(body.effectiveMode).toBe("paper");
+    expect(body.moduleResponse.module).toBe("arbitrage");
+    expect(body.demo.flow).toBe("arbitrage_judge_paper_demo_v1");
+    expect(body.demo.demoSafe).toBe(true);
+    expect(body.demo.operatorSummary).toContain("[arbitrage][paper]");
+    expect(body.demo.judgeSummary).toContain("paper");
+    expect(body.demo.decisionSummary.decision).toBe("paper_trade");
+    expect(body.demo.decisionSummary.reasonCodes.length).toBeGreaterThan(0);
+    expect(body.demo.decisionSummary.blockingReasonCodes).toEqual([]);
+    expect(body.demo.contexts.marketContext?.sourceSkill).toBe("binance/spot");
+    expect(body.demo.contexts.readinessContext?.sourceSkill).toBe("binance/assets");
+    expect(body.demo.contexts.enrichmentContext?.sourceSkills).toEqual(
+      expect.arrayContaining(["binance-web3/query-token-info", "binance-web3/query-token-audit"]),
+    );
+    expect(body.demo.simulationSummary?.status).toBe("pass");
+    expect(body.demo.executionSummary.status).toBe("completed");
+    expect(body.demo.executionSummary.liveExecutionAttempted).toBe(false);
+    expect(discovery.approveCalls).toEqual([
+      {
+        sessionId: "session-1",
+        candidateId: "candidate-1",
+        mode: "paper",
+      },
+    ]);
+  });
+
+  it("downgrades live requests to paper in the judge demo route", async () => {
+    const store = setupStore();
+    const engine = {
+      getCurrentMode: () => "paper",
+      requestMode: (mode: "paper" | "live"): EngineModeResponse => ({
+        ok: true,
+        requestedMode: mode,
+        currentMode: mode,
+        reasons: [],
+      }),
+    };
+    const manifest: SkillManifest = {
+      id: "alphaos",
+      version: "0.2.0",
+      description: "test",
+      strategyIds: ["dex-arbitrage"],
+    };
+    const discovery = createDiscoveryStub();
+    const app = createServer(engine as never, store, manifest, {
+      discoveryEngine: discovery as never,
+      apiSecret: API_SECRET,
+      demoPublic: false,
+    });
+
+    await invokeApi(
+      app,
+      "POST",
+      "/api/v1/discovery/sessions/start",
+      {
+        strategyId: "spread-threshold",
+        pairs: ["ETH/USDC"],
+      },
+      auth(),
+    );
+
+    const approveDemo = await invokeApi(
+      app,
+      "POST",
+      "/api/v1/discovery/sessions/session-1/approve/paper-demo",
+      {
+        candidateId: "candidate-1",
+        mode: "live",
+      },
+      auth(),
+    );
+    expect(approveDemo.status).toBe(200);
+
+    const body = approveDemo.body as {
+      requestedMode: string;
+      executionMode: string;
+      effectiveMode: string;
+      degradedToPaper: boolean;
+      demo: {
+        modeResolution: string;
+        liveRequestDowngraded: boolean;
+        notes: string[];
+        executionSummary: { liveExecutionAttempted: boolean };
+      };
+    };
+    expect(body.requestedMode).toBe("live");
+    expect(body.executionMode).toBe("paper");
+    expect(body.effectiveMode).toBe("paper");
+    expect(body.degradedToPaper).toBe(true);
+    expect(body.demo.modeResolution).toBe("live_request_downgraded_to_paper_for_demo_safety");
+    expect(body.demo.liveRequestDowngraded).toBe(true);
+    expect(body.demo.notes[0]).toContain("downgraded to paper");
+    expect(body.demo.executionSummary.liveExecutionAttempted).toBe(false);
+    expect(discovery.approveCalls).toEqual([
+      {
+        sessionId: "session-1",
+        candidateId: "candidate-1",
+        mode: "paper",
+      },
+    ]);
   });
 });
