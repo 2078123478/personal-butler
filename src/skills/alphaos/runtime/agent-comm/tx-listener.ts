@@ -213,6 +213,10 @@ export function startListener(
   const getBlockReceiptsForCatchUp = async (
     blockNumber: bigint,
   ): Promise<TransactionReceipt[] | null> => {
+    if (typeof publicClient.request !== "function") {
+      blockReceiptSupport = "unsupported";
+      return null;
+    }
     try {
       const raw = await publicClient.request({
         method: "eth_getBlockReceipts" as any,

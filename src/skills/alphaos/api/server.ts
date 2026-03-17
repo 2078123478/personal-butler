@@ -1285,7 +1285,7 @@ function demoHtml(): string {
       <pre id="moments">No growth moments yet</pre>
     </div>
     <div class="card">
-      <h2>Execution Backend Probe</h2>
+      <h2>OnchainOS v6 Probe</h2>
       <pre id="probe">Probe pending...</pre>
     </div>
     <div class="card feed">

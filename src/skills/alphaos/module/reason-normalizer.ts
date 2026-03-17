@@ -233,11 +233,11 @@ export function normalizeSimulationReasonBundle(simulation: SimulationResult): N
       });
     }
   } else {
-    const blocking =
+    const blocking: ArbitrageReasonCode[] =
       bundle.blockingReasonCodes.length > 0
         ? bundle.blockingReasonCodes
         : ["simulation_failed"];
-    const reasons =
+    const reasons: ArbitrageReasonCode[] =
       bundle.reasonCodes.length > 0
         ? bundle.reasonCodes
         : ["simulation_failed"];
@@ -325,4 +325,3 @@ export function mergeReasonBundles(bundles: NormalizedReasonBundle[]): Normalize
   }
   return merged;
 }
-

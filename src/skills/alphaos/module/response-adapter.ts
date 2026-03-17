@@ -15,10 +15,12 @@ import type {
   ArbitrageEffectiveMode,
   ArbitrageModuleResponse,
   ArbitrageModuleStatus,
+  ArbitrageExecutionView,
   ArbitrageReasonCode,
   ArbitrageResponseAdapterInput,
   ArbitrageRequestedMode,
   ArbitrageSkillUsage,
+  ArbitrageSimulationView,
   ArbitrageSummaryView,
   ArbitrageTradeStatus,
 } from "./types";
@@ -585,7 +587,7 @@ export function adaptArbitrageModuleResponse(input: ArbitrageResponseAdapterInpu
     closedAt: trade || decision === "reject" ? detectedAt : undefined,
   };
 
-  const simulationView = simulation
+  const simulationView: ArbitrageSimulationView | null = simulation
     ? {
         status: simulation.pass ? "pass" : "fail",
         summary: simulation.reason,
@@ -602,7 +604,7 @@ export function adaptArbitrageModuleResponse(input: ArbitrageResponseAdapterInpu
       }
     : null;
 
-  const executionView =
+  const executionView: ArbitrageExecutionView | null =
     trade || decision === "paper_trade" || decision === "execute" || decision === "propose_execution"
       ? {
           requestedMode,
