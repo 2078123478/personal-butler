@@ -7,10 +7,11 @@ This index is the fastest way to understand what Personal Butler already has tod
 If you only have a few minutes, read in this order:
 
 1. [BNB Chain One Pager](BNBCHAIN_ONE_PAGER.md) — fastest ecosystem-facing overview.
-2. [Personal Butler Agent-Comm One Pager](AGENT_COMM_ONE_PAGER.md) — shortest path to the trust and communication layer.
-3. [Agent-Comm V2 Design](AGENT_COMM_V2_DESIGN.md) — implementation-oriented protocol design.
-4. [Personal Butler Operations Guide](ALPHAOS_OPERATIONS.md) — current operator runbook for the execution stack.
-5. [Production Deployment Guide](AGENT_COMM_PRODUCTION_DEPLOYMENT.md) — battle-tested deployment flow.
+2. [BNB Skills Compatibility Plan](BNB_SKILLS_COMPATIBILITY_PLAN.md) — the current roadmap for aligning Personal Butler with Binance official open skills.
+3. [Personal Butler Agent-Comm One Pager](AGENT_COMM_ONE_PAGER.md) — shortest path to the trust and communication layer.
+4. [Agent-Comm V2 Design](AGENT_COMM_V2_DESIGN.md) — implementation-oriented protocol design.
+5. [Personal Butler Operations Guide](ALPHAOS_OPERATIONS.md) — current operator runbook for the execution stack.
+6. [Production Deployment Guide](AGENT_COMM_PRODUCTION_DEPLOYMENT.md) — battle-tested deployment flow.
 
 ---
 
