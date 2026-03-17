@@ -1,0 +1,17 @@
+[
+  {
+    "signalId": "capsule-binance-announcement-eth-listing",
+    "source": "binance_announcement",
+    "type": "new_listing",
+    "title": "Binance announces ETH ecosystem listing update",
+    "body": "New ETH ecosystem token listing schedule was published.",
+    "urgency": "high",
+    "relevanceHint": "likely_relevant",
+    "pair": "ETH/USDC",
+    "detectedAt": "2026-03-17T08:00:00.000Z",
+    "metadata": {
+      "exchange": "binance",
+      "category": "listing"
+    }
+  }
+]

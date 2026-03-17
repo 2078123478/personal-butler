@@ -1,0 +1,20 @@
+[
+  {
+    "signalId": "capsule-arbitrage-opportunity-eth-usdc",
+    "source": "market_opportunity",
+    "type": "spread_detected",
+    "title": "Arbitrage candidate detected for ETH/USDC",
+    "body": "Spread and confidence exceeded configured thresholds.",
+    "urgency": "high",
+    "relevanceHint": "likely_relevant",
+    "pair": "ETH/USDC",
+    "detectedAt": "2026-03-17T08:05:00.000Z",
+    "metadata": {
+      "strategyId": "spread-threshold",
+      "buyDex": "dex-a",
+      "sellDex": "dex-b",
+      "expectedNetUsd": 11.3,
+      "confidence": 0.81
+    }
+  }
+]

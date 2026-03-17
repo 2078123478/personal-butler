@@ -1,0 +1,16 @@
+[
+  {
+    "signalId": "capsule-square-narrative-meme-surge",
+    "source": "binance_square",
+    "type": "meme_surge",
+    "title": "Square narrative meme volume surged",
+    "body": "Mentions of a meme narrative rose sharply in social feeds.",
+    "urgency": "medium",
+    "relevanceHint": "likely_irrelevant",
+    "detectedAt": "2026-03-17T08:15:00.000Z",
+    "metadata": {
+      "channel": "square",
+      "trendScore": 72
+    }
+  }
+]

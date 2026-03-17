@@ -1,0 +1,17 @@
+[
+  {
+    "signalId": "capsule-token-risk-alert-suspicious-contract",
+    "source": "token_risk_change",
+    "type": "risk_alert",
+    "title": "Suspicious behavior detected on watched token contract",
+    "body": "A privileged function was called from an unusual owner path.",
+    "urgency": "critical",
+    "relevanceHint": "likely_relevant",
+    "tokenAddress": "0x1111111111111111111111111111111111111111",
+    "chainId": 1,
+    "detectedAt": "2026-03-17T08:10:00.000Z",
+    "metadata": {
+      "riskClass": "suspicious_owner_action"
+    }
+  }
+]
