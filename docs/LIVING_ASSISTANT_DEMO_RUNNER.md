@@ -2,6 +2,9 @@
 
 Run these commands to see Personal Butler sense, judge, and contact like a real assistant.
 
+For CLI phone-call rehearsal and live call delivery flow, use:
+- [Living Assistant Call Demo Runbook](LIVING_ASSISTANT_CALL_DEMO_RUNBOOK.md)
+
 Default port is `3000`. If your server uses another port, replace it in the commands below.
 
 ## Prerequisites

@@ -9,6 +9,9 @@ import { VoiceDeliveryOrchestrator } from "./voice-orchestrator";
 export interface DeliveryExecutorConfig {
   telegramSender?: TelegramVoiceSender;
   voiceOrchestrator?: VoiceDeliveryOrchestrator;
+  voiceOrchestratorOptions?: {
+    demoMode?: boolean;
+  };
   dryRun?: boolean;
 }
 
@@ -105,10 +108,14 @@ export async function executeDelivery(
     (decision.attentionLevel === "strong_interrupt" || decision.attentionLevel === "call_escalation");
   if (shouldUseVoiceOrchestrator && voiceOrchestrator) {
     const briefText = brief?.text ?? decision.reason;
-    const orchestratorResults = await voiceOrchestrator.deliver(decision.attentionLevel, {
+    const payload = {
       text: briefText,
       ...(audio ? { audio: audio.audio, audioFormat: audio.format } : {}),
-    });
+    };
+    const orchestratorOptions = config?.voiceOrchestratorOptions;
+    const orchestratorResults = orchestratorOptions
+      ? await voiceOrchestrator.deliver(decision.attentionLevel, payload, orchestratorOptions)
+      : await voiceOrchestrator.deliver(decision.attentionLevel, payload);
     const firstSuccess = orchestratorResults.find((result) => result.ok)?.channel;
     const firstAttempt = orchestratorResults[0]?.channel;
     const sent = orchestratorResults.some((result) => result.ok);

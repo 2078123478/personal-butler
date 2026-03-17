@@ -208,6 +208,44 @@ describe("living assistant delivery executor", () => {
     expect(result.orchestratorResults).toHaveLength(2);
   });
 
+  it("forwards voice orchestrator demo options when configured", async () => {
+    const deliver = vi.fn().mockResolvedValue([
+      {
+        channel: "twilio",
+        ok: true,
+        detail: {
+          ok: true,
+          callSid: "CA999",
+        },
+      },
+    ]);
+    const voiceOrchestrator = {
+      deliver,
+    } as unknown as VoiceDeliveryOrchestrator;
+
+    const result = await executeDelivery(buildDecision("call_escalation"), buildBrief(), buildAudio(), {
+      voiceOrchestrator,
+      voiceOrchestratorOptions: {
+        demoMode: true,
+      },
+    });
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver).toHaveBeenCalledWith(
+      "call_escalation",
+      {
+        text: buildBrief().text,
+        audio: buildAudio().audio,
+        audioFormat: buildAudio().format,
+      },
+      {
+        demoMode: true,
+      },
+    );
+    expect(result.sent).toBe(true);
+    expect(result.channel).toBe("twilio");
+  });
+
   it("returns combined errors when all orchestrator channels fail", async () => {
     const deliver = vi.fn().mockResolvedValue([
       {

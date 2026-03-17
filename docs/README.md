@@ -26,6 +26,7 @@ If you only have a few minutes, read in this order:
 18. [Agent-Comm V2 Design](AGENT_COMM_V2_DESIGN.md) — implementation-oriented protocol design.
 19. [Personal Butler Operations Guide](ALPHAOS_OPERATIONS.md) — current operator runbook for the execution stack.
 20. [Production Deployment Guide](AGENT_COMM_PRODUCTION_DEPLOYMENT.md) — battle-tested deployment flow.
+21. [Living Assistant Call Demo Runbook](LIVING_ASSISTANT_CALL_DEMO_RUNBOOK.md) — call-focused operator flow for rehearsal and live handoff.
 
 ---
 
@@ -112,17 +113,18 @@ Read:
 
 1. [Arbitrage One Pager](ARBITRAGE_ONE_PAGER.md)
 2. [Living Assistant Demo Runner](LIVING_ASSISTANT_DEMO_RUNNER.md)
-3. [Arbitrage Module Contract](ARBITRAGE_MODULE_CONTRACT.md)
-4. [Arbitrage Skill Mapping](ARBITRAGE_SKILL_MAPPING.md)
-5. [Arbitrage Adapter Plan](ARBITRAGE_ADAPTER_PLAN.md)
-6. [Arbitrage Output Examples](ARBITRAGE_OUTPUT_EXAMPLES.md)
-7. [Arbitrage Decision Reasons](ARBITRAGE_DECISION_REASONS.md)
-8. [Arbitrage Implementation Gap](ARBITRAGE_IMPLEMENTATION_GAP.md)
-9. [Arbitrage Module Tasks](ARBITRAGE_MODULE_TASKS.md)
-10. [Personal Butler Operations Guide](ALPHAOS_OPERATIONS.md)
-11. [Agent-Comm V2 Operations](AGENT_COMM_V2_OPERATIONS.md)
-12. [Production Deployment Guide](AGENT_COMM_PRODUCTION_DEPLOYMENT.md)
-13. [OpenClaw Discovery Playbook](OPENCLAW_DISCOVERY_PLAYBOOK.md)
+3. [Living Assistant Call Demo Runbook](LIVING_ASSISTANT_CALL_DEMO_RUNBOOK.md)
+4. [Arbitrage Module Contract](ARBITRAGE_MODULE_CONTRACT.md)
+5. [Arbitrage Skill Mapping](ARBITRAGE_SKILL_MAPPING.md)
+6. [Arbitrage Adapter Plan](ARBITRAGE_ADAPTER_PLAN.md)
+7. [Arbitrage Output Examples](ARBITRAGE_OUTPUT_EXAMPLES.md)
+8. [Arbitrage Decision Reasons](ARBITRAGE_DECISION_REASONS.md)
+9. [Arbitrage Implementation Gap](ARBITRAGE_IMPLEMENTATION_GAP.md)
+10. [Arbitrage Module Tasks](ARBITRAGE_MODULE_TASKS.md)
+11. [Personal Butler Operations Guide](ALPHAOS_OPERATIONS.md)
+12. [Agent-Comm V2 Operations](AGENT_COMM_V2_OPERATIONS.md)
+13. [Production Deployment Guide](AGENT_COMM_PRODUCTION_DEPLOYMENT.md)
+14. [OpenClaw Discovery Playbook](OPENCLAW_DISCOVERY_PLAYBOOK.md)
 
 ---
 

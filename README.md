@@ -185,6 +185,7 @@ Start here:
 - [Champion Agent System](docs/CHAMPION_AGENT_SYSTEM.md)
 - [Champion Demo Story](docs/CHAMPION_DEMO_STORY.md)
 - [Living Assistant MVP Plan](docs/LIVING_ASSISTANT_MVP_PLAN.md)
+- [Living Assistant Call Demo Runbook](docs/LIVING_ASSISTANT_CALL_DEMO_RUNBOOK.md)
 - [BNB Skills Compatibility Plan](docs/BNB_SKILLS_COMPATIBILITY_PLAN.md)
 - [Arbitrage One Pager](docs/ARBITRAGE_ONE_PAGER.md)
 - [Arbitrage Module Spec v0](docs/ARBITRAGE_MODULE_SPEC.md)
