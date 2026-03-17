@@ -88,6 +88,31 @@ function hasAudioUrl(audio?: TTSResult): audio is TTSResult & { audioUrl: string
   return Boolean(audio?.audioUrl && audio.audioUrl.trim().length > 0);
 }
 
+/**
+ * Resolve audio bytes from a TTSResult.
+ * If bytes are already present, return them directly.
+ * If only audioUrl is available, download the audio.
+ * Returns undefined if no audio is available.
+ */
+async function resolveAudioBytes(audio?: TTSResult): Promise<Buffer | undefined> {
+  if (hasAudioBytes(audio)) {
+    return audio.audio;
+  }
+  if (hasAudioUrl(audio)) {
+    try {
+      const response = await fetch(audio.audioUrl);
+      if (!response.ok) {
+        return undefined;
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 export async function executeDelivery(
   decision: ContactDecision,
   brief?: VoiceBrief,
@@ -165,8 +190,9 @@ export async function executeDelivery(
   }
 
   if (decision.attentionLevel === "voice_brief") {
-    if (hasAudioBytes(audio)) {
-      const voiceResult = await sender.sendVoice(audio.audio, { caption: briefText });
+    const audioBytes = await resolveAudioBytes(audio);
+    if (audioBytes) {
+      const voiceResult = await sender.sendVoice(audioBytes, { caption: briefText });
       return {
         channel: "telegram",
         sent: voiceResult.ok,
@@ -188,8 +214,9 @@ export async function executeDelivery(
 
   if (decision.attentionLevel === "strong_interrupt") {
     const followUpText = strongInterruptFollowUp(decision);
-    if (hasAudioBytes(audio)) {
-      const combined = await sender.sendVoiceWithFollowUp(audio.audio, briefText, followUpText);
+    const audioBytes = await resolveAudioBytes(audio);
+    if (audioBytes) {
+      const combined = await sender.sendVoiceWithFollowUp(audioBytes, briefText, followUpText);
       return {
         channel: "telegram",
         sent: combined.voice.ok && combined.followUp.ok,
@@ -218,8 +245,9 @@ export async function executeDelivery(
 
   const escalationText = escalationFollowUp(decision);
   const urgentCaption = `URGENT: ${briefText}`;
-  if (hasAudioBytes(audio)) {
-    const combined = await sender.sendVoiceWithFollowUp(audio.audio, urgentCaption, escalationText);
+  const audioBytes = await resolveAudioBytes(audio);
+  if (audioBytes) {
+    const combined = await sender.sendVoiceWithFollowUp(audioBytes, urgentCaption, escalationText);
     return {
       channel: "telegram",
       sent: combined.voice.ok && combined.followUp.ok,
