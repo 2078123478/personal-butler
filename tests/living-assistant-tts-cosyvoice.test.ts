@@ -248,11 +248,10 @@ describe("living assistant cosyvoice tts", () => {
       apiKey: "dash-key",
     });
     const p = provider.synthesize("hello world");
+    const rejection = expect(p).rejects.toThrow(/timed out/i);
 
     await vi.advanceTimersByTimeAsync(30_000);
 
-    await expect(p).rejects.toThrow(/timed out/i);
-    vi.useRealTimers();
-    vi.runAllTimers(); // flush any remaining callbacks to prevent unhandled rejection after test exits
+    await rejection;
   });
 });
