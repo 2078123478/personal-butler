@@ -181,6 +181,7 @@ Start here:
 
 - [Documentation Index](docs/README.md)
 - [BNB Chain One Pager](docs/BNBCHAIN_ONE_PAGER.md)
+- [Champion Agent System](docs/CHAMPION_AGENT_SYSTEM.md)
 - [BNB Skills Compatibility Plan](docs/BNB_SKILLS_COMPATIBILITY_PLAN.md)
 - [Arbitrage One Pager](docs/ARBITRAGE_ONE_PAGER.md)
 - [Arbitrage Module Spec v0](docs/ARBITRAGE_MODULE_SPEC.md)
