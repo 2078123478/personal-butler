@@ -187,6 +187,8 @@ Start here:
 - [Arbitrage Module Tasks](docs/ARBITRAGE_MODULE_TASKS.md)
 - [Arbitrage Module Contract](docs/ARBITRAGE_MODULE_CONTRACT.md)
 - [Arbitrage Skill Mapping](docs/ARBITRAGE_SKILL_MAPPING.md)
+- [Arbitrage Adapter Plan](docs/ARBITRAGE_ADAPTER_PLAN.md)
+- [Arbitrage Output Examples](docs/ARBITRAGE_OUTPUT_EXAMPLES.md)
 - [Arbitrage Decision Reasons](docs/ARBITRAGE_DECISION_REASONS.md)
 - [Arbitrage Implementation Gap](docs/ARBITRAGE_IMPLEMENTATION_GAP.md)
 - [Arbitrage Demo Script](docs/ARBITRAGE_DEMO_SCRIPT.md)
