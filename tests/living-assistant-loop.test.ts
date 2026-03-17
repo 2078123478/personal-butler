@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultContactPolicyConfig } from "../src/skills/alphaos/living-assistant/contact-policy";
 import type { UserContext } from "../src/skills/alphaos/living-assistant/contact-policy";
+import { DigestBatchScheduler } from "../src/skills/alphaos/living-assistant/digest-batching";
 import * as deliveryExecutorModule from "../src/skills/alphaos/living-assistant/delivery/delivery-executor";
 import { TelegramVoiceSender } from "../src/skills/alphaos/living-assistant/delivery/telegram-voice-sender";
 import { runLivingAssistantLoop } from "../src/skills/alphaos/living-assistant/loop";
@@ -18,6 +19,19 @@ function buildUserContext(overrides?: Partial<UserContext>): UserContext {
     quietHoursEnd: 8,
     maxDailyContacts: 12,
     ...overrides,
+  };
+}
+
+function createClock(startIso: string): {
+  now: () => Date;
+  set: (iso: string) => void;
+} {
+  let current = Date.parse(startIso);
+  return {
+    now: () => new Date(current),
+    set: (iso: string) => {
+      current = Date.parse(iso);
+    },
   };
 }
 
@@ -251,5 +265,82 @@ describe("living assistant loop", () => {
     expect(deliverySpy).not.toHaveBeenCalled();
     expect(output.delivery).toBeUndefined();
     expect(output.delivered).toBe(false);
+  });
+
+  it("queues digest decisions into the digest scheduler", async () => {
+    const scheduler = new DigestBatchScheduler({
+      now: () => new Date("2026-03-17T10:00:00.000Z"),
+    });
+    const signal = normalizeSignal({
+      kind: "binance_announcement",
+      title: "Low urgency watchlist note",
+      body: "Quiet update for ETH/USDC.",
+      type: "exchange_news",
+      pair: "ETH/USDC",
+      urgency: "low",
+      relevanceHint: "unknown",
+      detectedAt: "2026-03-17T09:59:00.000Z",
+    });
+
+    const output = await runLivingAssistantLoop({
+      signal,
+      userContext: buildUserContext(),
+      policyConfig: defaultContactPolicyConfig,
+      digestScheduler: scheduler,
+    });
+
+    expect(output.decision.attentionLevel).toBe("digest");
+    expect(output.digestEnqueued?.signalId).toBe(signal.signalId);
+    expect(output.digestQueue?.size).toBe(1);
+    expect(output.digestFlushed).toBeUndefined();
+  });
+
+  it("flushes due digest batches before evaluating a new signal", async () => {
+    const clock = createClock("2026-03-17T10:00:00.000Z");
+    const scheduler = new DigestBatchScheduler({
+      now: clock.now,
+    });
+
+    const digestSignal = normalizeSignal({
+      kind: "binance_announcement",
+      title: "Low urgency watchlist note",
+      body: "Quiet update for ETH/USDC.",
+      type: "exchange_news",
+      pair: "ETH/USDC",
+      urgency: "low",
+      relevanceHint: "unknown",
+      detectedAt: "2026-03-17T09:59:00.000Z",
+    });
+    await runLivingAssistantLoop({
+      signal: digestSignal,
+      userContext: buildUserContext(),
+      policyConfig: defaultContactPolicyConfig,
+      digestScheduler: scheduler,
+    });
+
+    clock.set("2026-03-17T11:05:00.000Z");
+
+    const highSignal = normalizeSignal({
+      kind: "binance_announcement",
+      title: "High urgency listing path update",
+      body: "Listing details refreshed for ETH/USDC.",
+      type: "new_listing",
+      pair: "ETH/USDC",
+      urgency: "high",
+      relevanceHint: "likely_relevant",
+      detectedAt: "2026-03-17T11:04:00.000Z",
+    });
+    const output = await runLivingAssistantLoop({
+      signal: highSignal,
+      userContext: buildUserContext(),
+      policyConfig: defaultContactPolicyConfig,
+      digestScheduler: scheduler,
+    });
+
+    expect(output.decision.attentionLevel).toBe("voice_brief");
+    expect(output.digestFlushed?.signalCount).toBe(1);
+    expect(output.digestFlushed?.items[0]?.signalId).toBe(digestSignal.signalId);
+    expect(output.digestQueue?.size).toBe(0);
+    expect(output.digestEnqueued).toBeUndefined();
   });
 });

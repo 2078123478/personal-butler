@@ -189,4 +189,56 @@ describe("living assistant API routes", () => {
     expect(body.items).toContain("arbitrage-opportunity-eth-usdc.json");
     expect(body.items).toContain("binance-announcement-eth-listing.json");
   });
+
+  it("/digest/status and /digest/flush expose digest batching state", async () => {
+    const app = setupApp();
+
+    const evaluateResponse = await invokeApi(app, "POST", "/api/v1/living-assistant/evaluate", {
+      signal: {
+        kind: "binance_announcement",
+        title: "Low signal watchlist update",
+        body: "Watchlist pair update with low urgency.",
+        type: "exchange_news",
+        pair: "ETH/USDC",
+        urgency: "low",
+        relevanceHint: "unknown",
+        detectedAt: "2026-03-17T09:15:00.000Z",
+      },
+      userContext: {
+        localHour: 9,
+        recentContactCount: 0,
+        activeStrategies: ["spread-threshold"],
+        watchlist: ["ETH/USDC"],
+        riskTolerance: "moderate",
+      },
+      demoMode: true,
+    });
+
+    expect(evaluateResponse.status).toBe(200);
+    const evaluateBody = evaluateResponse.body as Record<string, unknown>;
+    expect((evaluateBody.decision as { attentionLevel: string }).attentionLevel).toBe("digest");
+    expect((evaluateBody.digestQueue as { size: number }).size).toBe(1);
+
+    const statusResponse = await invokeApi(app, "GET", "/api/v1/living-assistant/digest/status");
+    expect(statusResponse.status).toBe(200);
+    const statusBody = statusResponse.body as Record<string, unknown>;
+    expect((statusBody.queue as { size: number }).size).toBe(1);
+
+    const notDueResponse = await invokeApi(app, "POST", "/api/v1/living-assistant/digest/flush", {
+      force: false,
+    });
+    expect(notDueResponse.status).toBe(200);
+    const notDueBody = notDueResponse.body as Record<string, unknown>;
+    expect(notDueBody.flushed).toBe(false);
+    expect((notDueBody.queue as { size: number }).size).toBe(1);
+
+    const flushResponse = await invokeApi(app, "POST", "/api/v1/living-assistant/digest/flush", {
+      force: true,
+    });
+    expect(flushResponse.status).toBe(200);
+    const flushBody = flushResponse.body as Record<string, unknown>;
+    expect(flushBody.flushed).toBe(true);
+    expect((flushBody.digest as { signalCount: number }).signalCount).toBe(1);
+    expect((flushBody.queue as { size: number }).size).toBe(0);
+  });
 });

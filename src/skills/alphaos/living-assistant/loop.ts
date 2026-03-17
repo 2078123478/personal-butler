@@ -5,6 +5,7 @@ import type {
   ContactPolicyConfig,
   UserContext,
 } from "./contact-policy";
+import type { DigestBatch, DigestBatchScheduler, DigestQueueItem, DigestQueueSnapshot } from "./digest-batching";
 import { executeDelivery } from "./delivery/delivery-executor";
 import type { DeliveryExecutorConfig, DeliveryResult } from "./delivery/delivery-executor";
 import type { NormalizedSignal } from "./signal-radar";
@@ -20,6 +21,7 @@ export interface LivingAssistantLoopInput {
   ttsProvider?: TTSProvider;
   ttsOptions?: TTSOptions;
   deliveryExecutor?: DeliveryExecutorConfig;
+  digestScheduler?: DigestBatchScheduler;
   demoMode?: boolean;
 }
 
@@ -32,6 +34,9 @@ export interface LivingAssistantLoopOutput {
   delivered: boolean;
   deliveryChannel?: ContactChannel;
   demoMode: boolean;
+  digestQueue?: DigestQueueSnapshot;
+  digestEnqueued?: DigestQueueItem;
+  digestFlushed?: DigestBatch;
   timings: {
     policyMs: number;
     briefMs: number;
@@ -63,6 +68,27 @@ export async function runLivingAssistantLoop(
   const policyStart = performance.now();
   const decision = evaluateContactPolicy(input.signal, input.userContext, input.policyConfig);
   const policyMs = performance.now() - policyStart;
+
+  let digestQueue: DigestQueueSnapshot | undefined;
+  let digestEnqueued: DigestQueueItem | undefined;
+  let digestFlushed: DigestBatch | undefined;
+
+  if (input.digestScheduler) {
+    digestFlushed = input.digestScheduler.flushDue();
+  }
+
+  if (decision.attentionLevel === "digest" && input.digestScheduler) {
+    const enqueueResult = input.digestScheduler.enqueue({
+      signal: input.signal,
+      decision,
+      digestWindowMinutes: input.policyConfig.digestWindowMinutes,
+    });
+    digestEnqueued = enqueueResult.item;
+  }
+
+  if (input.digestScheduler) {
+    digestQueue = input.digestScheduler.getSnapshot();
+  }
 
   const briefStart = performance.now();
   const brief = shouldGenerateBrief(decision.attentionLevel)
@@ -109,6 +135,9 @@ export async function runLivingAssistantLoop(
     delivered: demoMode ? false : Boolean(delivery?.sent),
     deliveryChannel,
     demoMode,
+    digestQueue,
+    digestEnqueued,
+    digestFlushed,
     timings: {
       policyMs,
       briefMs,

@@ -12,6 +12,7 @@ import {
   type ContactPolicyConfig,
   type UserContext,
 } from "../living-assistant/contact-policy";
+import { DigestBatchScheduler } from "../living-assistant/digest-batching";
 import { runLivingAssistantLoop } from "../living-assistant/loop";
 import { normalizeSignal, type NormalizedSignal, type SignalUrgency } from "../living-assistant/signal-radar";
 import {
@@ -1782,6 +1783,7 @@ export function createServer(
   app.use(express.json({ limit: "512kb" }));
   const apiSecret = options?.apiSecret ?? process.env.API_SECRET ?? "";
   const demoPublic = options?.demoPublic ?? parseBoolean(process.env.DEMO_PUBLIC, false);
+  const livingAssistantDigestScheduler = new DigestBatchScheduler();
 
   if (options?.config) {
     store.backfillAgentContactsFromLegacyPeers({
@@ -1982,6 +1984,7 @@ export function createServer(
         signal,
         userContext,
         policyConfig,
+        digestScheduler: livingAssistantDigestScheduler,
         demoMode,
       }),
     );
@@ -2002,6 +2005,7 @@ export function createServer(
           signal: scenario.signal,
           userContext: scenario.userContext,
           policyConfig,
+          digestScheduler: livingAssistantDigestScheduler,
           demoMode: true,
         }),
       );
@@ -2017,6 +2021,24 @@ export function createServer(
 
   app.get("/api/v1/living-assistant/capsules", (_req, res) => {
     res.json({ items: listLivingAssistantCapsules() });
+  });
+
+  app.get("/api/v1/living-assistant/digest/status", (_req, res) => {
+    res.json({
+      queue: livingAssistantDigestScheduler.getSnapshot(),
+    });
+  });
+
+  app.post("/api/v1/living-assistant/digest/flush", (req, res) => {
+    const payload = isRecord(req.body) ? req.body : {};
+    const force = typeof payload.force === "boolean" ? payload.force : true;
+    const digest = force ? livingAssistantDigestScheduler.flushNow() : livingAssistantDigestScheduler.flushDue();
+    res.json({
+      force,
+      flushed: Boolean(digest),
+      digest: digest ?? null,
+      queue: livingAssistantDigestScheduler.getSnapshot(),
+    });
   });
 
   const respondDiscoveryUnavailable = (res: express.Response) => {

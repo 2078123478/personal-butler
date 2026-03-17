@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defaultContactPolicyConfig, type ContactPolicyConfig, type UserContext } from "../src/skills/alphaos/living-assistant/contact-policy";
+import { DigestBatchScheduler, type DigestBatch } from "../src/skills/alphaos/living-assistant/digest-batching";
 import {
   TelegramVoiceSender,
   VoiceDeliveryOrchestrator,
@@ -658,9 +659,22 @@ function printDeliveryResult(delivery?: DeliveryResult): {
   };
 }
 
+function printDigestBatch(digest: DigestBatch, label: string): void {
+  console.log(
+    `${label}: digestId=${digest.digestId}, signals=${digest.signalCount}, window=${digest.windowStartedAt} -> ${digest.windowEndedAt}`,
+  );
+  if (digest.highlights.length > 0) {
+    for (const highlight of digest.highlights) {
+      console.log(`Digest highlight: ${highlight}`);
+    }
+  }
+  console.log(`Digest summary:\n${digest.text}`);
+}
+
 async function runLoopScenario(
   scenario: LoopScenarioInput,
   runtime: DemoRuntime,
+  digestScheduler: DigestBatchScheduler,
   demoMode: boolean,
   outputDir?: string,
 ): Promise<{
@@ -670,6 +684,9 @@ async function runLoopScenario(
   deliveryAttempted: boolean;
   deliverySent: boolean;
   deliveryFailed: boolean;
+  digestQueued: boolean;
+  digestQueueSize: number;
+  digestFlushed?: DigestBatch;
 }> {
   const loopOutput = await runLivingAssistantLoop({
     signal: scenario.signal,
@@ -678,6 +695,7 @@ async function runLoopScenario(
       ...defaultContactPolicyConfig,
       ...(scenario.policyConfig ?? {}),
     },
+    digestScheduler,
     demoMode,
     ...(runtime.ttsProvider ? { ttsProvider: runtime.ttsProvider, ttsOptions: runtime.ttsOptions } : {}),
     ...(runtime.deliveryExecutor ? { deliveryExecutor: runtime.deliveryExecutor } : {}),
@@ -714,6 +732,18 @@ async function runLoopScenario(
         failed: false,
       };
 
+  if (loopOutput.digestFlushed) {
+    printDigestBatch(loopOutput.digestFlushed, "Digest flush (due)");
+  }
+  const digestQueueSize = loopOutput.digestQueue?.size ?? 0;
+  if (loopOutput.digestEnqueued) {
+    console.log(
+      `Digest queue: enqueued signalId=${loopOutput.digestEnqueued.signalId}, size=${digestQueueSize}, nextFlushAt=${loopOutput.digestQueue?.nextFlushAt ?? "n/a"}`,
+    );
+  } else if (digestQueueSize > 0) {
+    console.log(`Digest queue: size=${digestQueueSize}, nextFlushAt=${loopOutput.digestQueue?.nextFlushAt ?? "n/a"}`);
+  }
+
   console.log(
     `Timing: policy=${formatDurationMs(loopOutput.timings.policyMs)}, brief=${formatDurationMs(loopOutput.timings.briefMs)}, tts=${formatDurationMs(loopOutput.timings.ttsMs)}, delivery=${formatDurationMs(loopOutput.timings.deliveryMs)}, total=${formatDurationMs(loopOutput.timings.totalMs)}`,
   );
@@ -726,6 +756,9 @@ async function runLoopScenario(
     deliveryAttempted: deliveryStats.attempted,
     deliverySent: deliveryStats.sent,
     deliveryFailed: deliveryStats.failed,
+    digestQueued: Boolean(loopOutput.digestEnqueued),
+    digestQueueSize,
+    digestFlushed: loopOutput.digestFlushed,
   };
 }
 
@@ -737,6 +770,7 @@ async function main(): Promise<void> {
 
   const demoMode = cli.dryRun;
   const runtime = cli.send ? buildSendRuntime() : cli.call ? buildCallRuntime({ demoDelivery: cli.demoDelivery }) : {};
+  const digestScheduler = new DigestBatchScheduler();
   if (cli.call && runtime.callPreflight) {
     printCallPreflight(runtime.callPreflight, Boolean(runtime.callDemoDelivery));
   }
@@ -853,13 +887,17 @@ async function main(): Promise<void> {
   let deliveryAttempts = 0;
   let deliverySucceeded = 0;
   let deliveryFailed = 0;
+  let digestSignalsQueued = 0;
+  let digestFlushCount = 0;
+  let digestSignalsFlushed = 0;
+  let digestQueueSize = 0;
 
   for (const scenario of runScenarios) {
     console.log("");
     console.log(`Scenario: ${scenario.name}`);
     console.log(`Description: ${scenario.description}`);
 
-    const runResult = await runLoopScenario(scenario, runtime, demoMode, outputDir);
+    const runResult = await runLoopScenario(scenario, runtime, digestScheduler, demoMode, outputDir);
     if (runResult.briefGenerated) {
       briefsGenerated += 1;
     }
@@ -875,7 +913,24 @@ async function main(): Promise<void> {
     if (runResult.deliveryFailed) {
       deliveryFailed += 1;
     }
+    if (runResult.digestQueued) {
+      digestSignalsQueued += 1;
+    }
+    if (runResult.digestFlushed) {
+      digestFlushCount += 1;
+      digestSignalsFlushed += runResult.digestFlushed.signalCount;
+    }
+    digestQueueSize = runResult.digestQueueSize;
     loopTotalMs += runResult.loopTotalMs;
+  }
+
+  const finalDigest = digestScheduler.flushNow();
+  if (finalDigest) {
+    console.log("");
+    printDigestBatch(finalDigest, "Digest flush (end-of-run)");
+    digestFlushCount += 1;
+    digestSignalsFlushed += finalDigest.signalCount;
+    digestQueueSize = 0;
   }
 
   console.log("");
@@ -896,6 +951,12 @@ async function main(): Promise<void> {
   }
   if (runtime.callDemoDelivery) {
     summaryParts.push("callDelivery=simulated");
+  }
+  if (digestSignalsQueued > 0 || digestFlushCount > 0 || digestQueueSize > 0) {
+    summaryParts.push(`digestQueued=${digestSignalsQueued}`);
+    summaryParts.push(`digestFlushes=${digestFlushCount}`);
+    summaryParts.push(`digestSignalsFlushed=${digestSignalsFlushed}`);
+    summaryParts.push(`digestPending=${digestQueueSize}`);
   }
   console.log(`Summary: ${summaryParts.join(", ")}`);
 }
