@@ -1,294 +1,156 @@
-# Vigil
+# Vigil — BNB 生态智能生活助手
 
-Vigil is a skill-oriented autonomous agent framework for building private, wallet-native, chain-aware AI assistants with proactive sensing and contact judgment.
-
-It combines four layers in one project:
-
-- **Agent identity & communication** — agents own wallets, exchange signed contact cards, and communicate through consent-gated encrypted messages.
-- **Composable skill runtime** — capabilities are organized as skills with clear boundaries and reusable infrastructure.
-- **On-chain execution workflows** — market discovery, strategy evaluation, simulation, and execution can be connected into a production-style loop.
-- **Living assistant experience loop** — ecosystem signal radar, LLM-powered signal triage (87% noise reduction), natural language voice briefing, and proactive contact judgment combined into a demo-safe assistant flow.
-
-**Positioning:** built to evolve toward **BNB Chain-friendly agent infrastructure**, while preserving the full working codebase and battle-tested flows from the original project baseline.
-
-> Transitional note: some internal module names still reference **AlphaOS** or **OnchainOS**. This repository keeps the current implementation intact first, then refactors naming and chain defaults in later phases.
+> 不是被动等命令的 bot，而是住在 BNB 生态里、24h 主动感知信号、有判断力、会说话、链上可信的 AI 生活助手。
 
 ---
 
-## Why this repo exists
+## 📖 评委必读 — 项目介绍文档
 
-This repository is the next-stage evolution of the original submitted project.
+> **强烈建议先阅读项目介绍文档，了解 Vigil 的完整设计理念和技术深度。**
 
-The goal is **not** to discard the existing work. The goal is to keep the full system, preserve the proven architecture, and rebuild the project narrative so people can understand the value in seconds:
-
-- a **private AI agent** should have its own identity
-- an agent should be able to **form trusted connections** with other agents
-- agent communication should be **verifiable, encrypted, and chain-aware**
-- useful agents need a **real execution layer**, not just chat
-
-That is the core idea behind **Vigil**.
+| 文档 | 说明 | 链接 |
+|------|------|------|
+| 📋 **项目介绍（简版）** | 5 分钟快速了解四大模块 + 技术亮点 | [docs/项目介绍-简版.md](docs/项目介绍-简版.md) |
+| 📚 **项目介绍（深度版）** | 完整架构设计 + 技术细节 + 商业化路径 | [docs/项目介绍.md](docs/项目介绍.md) |
 
 ---
 
-## Core Capabilities
+## 核心能力一览
 
-### 1. Agent-Comm — wallet-native agent communication
+```
+Binance 公告/Square ──→ Signal Radar ──→ LLM Triage (87%噪音过滤)
+                                              │
+                                              ▼
+                                     Contact Policy Engine
+                                      (6级注意力阶梯)
+                                              │
+                              ┌───────────────┼───────────────┐
+                              ▼               ▼               ▼
+                         text_nudge     voice_brief    call_escalation
+                        (Telegram)    (克隆音色TTS)    (Twilio电话)
+                              │               │               │
+                              └───────┬───────┘               │
+                                      ▼                       ▼
+                              Inline Keyboard            紧急电话呼叫
+                           (一键操作 → 闭环)
+```
 
-Agent-Comm is the protocol core of this repository.
+## 四大模块
 
-- **Wallet = identity**
-- **Signed contact cards** for portable introductions
-- **Consent-gated trust** before business commands are accepted
-- **ECDH + AES-256-GCM** encrypted payloads
-- **On-chain transport** through calldata inscriptions
-- **Chain-agnostic design** for EVM environments
+### 1. 🔗 Agent-Comm — 链上铭文通信协议
+
+把 BNB Chain 本身变成 Agent 消息总线。零基础设施，零信任假设。
+
+- 钱包 = 身份，EIP-712 签名名片
+- secp256k1-ECDH + AES-256-GCM 端到端加密
+- 完整连接生命周期：发现 → 邀请 → 信任 → 通信 → 撤销
 
 ![Agent-Comm Contact Card](docs/assets/agent-comm-card-preview.png)
 
-### 2. Skill-oriented architecture
+### 2. 💰 套利执行引擎
 
-Capabilities are organized as composable skills:
+信息差套利 + 三层风控，不是延迟内卷。
 
-```text
-skills/
-├── agent-comm/    # identity, contacts, encrypted agent messaging
-├── alphaos/       # strategy/execution engine (current implementation name)
-└── discovery/     # opportunity scanning and candidate generation
-```
+- 六维成本模型（手续费 / 滑点 / MEV / Gas / 延迟 / 尾部风险）
+- 三层风控（准入门控 → 熔断器 → 动态阈值）
+- 自动 Paper ↔ Live 模式切换
 
-Skills share runtime primitives such as:
+### 3. 📡 Living Assistant — 主动感知 + 智能判断
 
-- SQLite state storage
-- encrypted vault storage
-- config and profile management
-- CLI + API entrypoints
-- operator-facing documentation
+- Signal Radar 实时轮询 Binance 公告 + Square
+- LLM Triage：80 条公告 → 8 通知 / 12 摘要 / 60 跳过
+- 6 级注意力阶梯：silent → digest → text_nudge → voice_brief → strong_interrupt → call_escalation
 
-### 3. Execution-ready workflow
+### 4. 📞 多渠道投递
 
-The project already contains a full execution loop:
-
-```text
-scan → evaluate → plan → simulate → execute → record → notify
-```
-
-Current implementation highlights:
-
-- paper/live execution modes
-- pluggable discovery strategies
-- execution probes and health checks
-- structured trade recording
-- live metrics / demo surface
-
-### 4. LLM-Powered Signal Triage
-
-The living assistant uses an LLM to batch-review ecosystem signals like a real human assistant:
-
-- **80 Binance announcements → 8 notify, 12 digest, 60 skip** (87% noise reduction)
-- Similar signals automatically grouped (e.g. 3 new_listing → 1 summary)
-- Natural language voice briefs in assistant persona style
-- Graceful fallback to rule engine when LLM is unavailable
-- Zero new dependencies — uses `fetch` to call DashScope Qwen API
+- Telegram 文字 + Inline Keyboard 一键操作
+- CosyVoice 克隆音色语音播报
+- Twilio 电话呼叫（紧急升级）
+- 15 秒 One-Breath Voice Brief
 
 ---
 
-## Why it matters for BNB Chain
+## Skills Hub 深度融合
 
-The strategic direction of Vigil is to become a stronger fit for **BNB Chain agent infrastructure**:
+已集成 6/14 官方 Skill（43%），全部编织进产品闭环：
 
-- agents need portable identity, not platform-locked accounts
-- multi-agent coordination needs trust and explicit consent
-- useful on-chain agents need execution, observability, and operational tooling
-- EVM compatibility makes the protocol and runtime portable
+| 官方 Skill | 闭环角色 |
+|---|---|
+| `binance/spot` | 套利引擎报价源 |
+| `binance/assets` | 执行前置检查 |
+| `binance-web3/query-token-info` | LLM Triage 上下文 |
+| `binance-web3/query-token-audit` | 风控层安全审计 |
+| Binance Announcements | Signal Radar 信号源 |
+| Binance Square | Signal Radar 信号源 |
 
-Today, the repository still preserves the original implementation baseline and existing execution integration. The next iterations will progressively shift:
+适配器模式，新增 Skill ~100 行代码即插即用。
 
-- external branding
-- documentation and examples
-- default network positioning
-- BNB Chain-oriented demos and narratives
+---
+
+## 技术指标
+
+| 维度 | 数据 |
+|------|------|
+| 代码规模 | 5100+ 行 TypeScript |
+| 测试 | 53 文件，379 用例，100% 通过 |
+| Skills Hub | 6/14 官方 skill（43%） |
+| 信噪比 | LLM 降低 87% 噪音 |
+| 通信协议 | 16KB 加密负载，双版本信封，前向安全 |
+| 投递 | Telegram / CosyVoice 克隆 / Twilio 电话 |
+| 风控 | 3 层自动降级 |
 
 ---
 
 ## Quick Start
 
-### Agent identity + communication
-
 ```bash
-# Initialize agent identity
+# 安装依赖
+npm install
+
+# Agent 身份初始化
 VAULT_MASTER_PASSWORD=pass123 npx tsx src/index.ts agent-comm:wallet:init
 
-# Export a shareable HTML contact card with QR code
+# 导出 HTML 名片（含 QR 码）
 VAULT_MASTER_PASSWORD=pass123 npx tsx src/index.ts agent-comm:card:export --html --output ./my-card.html
 
-# Import a peer's card (file, JSON, or agentcomm:// share URL)
-npx tsx src/index.ts agent-comm:card:import ./peer-card.json
+# Living Assistant E2E Demo（真实 Binance 信号 → LLM → 克隆语音 → Telegram 投递）
+cp .env.example .env  # 配置 Telegram Bot Token、DashScope API Key
+npx tsx scripts/hackathon-e2e-demo.ts
 
-# Request connection → peer approves → mutual trust
-VAULT_MASTER_PASSWORD=pass123 npx tsx src/index.ts agent-comm:connect:invite <contactId>
+# 套利引擎 Demo
+npm run demo:discovery
 
-# Send encrypted command to a trusted peer
-VAULT_MASTER_PASSWORD=pass123 npx tsx src/index.ts agent-comm:send ping contact:<contactId> --echo hello
-```
-
-### Run the current execution stack
-
-```bash
-cp .env.example .env
-npm install
-npm run dev
-```
-
-Demo scripts:
-
-```bash
-npm run demo:run            # full arbitrage cycle demo
-npm run demo:discovery      # discovery engine demo
-npm run demo:living-assistant -- --live   # live radar poll (announcements + optional Square endpoint)
-npm run demo:smoke:live     # current live-integration smoke test
+# 完整套利周期
+npm run demo:run
 ```
 
 ---
 
-## Current Command Surface
+## 更多文档
 
-### Agent-Comm commands
-
-| Command | Purpose |
-|---------|---------|
-| `ping` | Liveness check |
-| `probe_onchainos` | Query peer execution readiness (current command name) |
-| `start_discovery` | Request opportunity scanning |
-| `request_mode_change` | Request paper↔live switch |
-
-Full CLI reference:
-
-```bash
-npx tsx src/index.ts agent-comm:help
-```
-
----
-
-## Project Structure
-
-```text
-src/
-├── index.ts                    # CLI entrypoint
-├── skills/
-│   ├── alphaos/                # current execution engine modules
-│   └── ...
-skills/
-├── agent-comm/                 # protocol skill definition
-├── alphaos/                    # execution/runtime skill definition
-└── discovery/                  # discovery skill definition
-
-docs/                           # protocol, operations, design, and migration docs
-```
-
----
-
-## Documentation
-
-Start here:
-
-- [Documentation Index](docs/README.md)
+- [项目介绍（简版）](docs/项目介绍-简版.md) ⭐
+- [项目介绍（深度版）](docs/项目介绍.md) ⭐
 - [BNB Chain One Pager](docs/BNBCHAIN_ONE_PAGER.md)
-- [Champion Agent System](docs/CHAMPION_AGENT_SYSTEM.md)
-- [Champion Demo Story](docs/CHAMPION_DEMO_STORY.md)
-- [Living Assistant MVP Plan](docs/LIVING_ASSISTANT_MVP_PLAN.md)
-- [Living Assistant Implementation Status](docs/LIVING_ASSISTANT_IMPLEMENTATION_STATUS.md)
-- [Living Assistant Call Demo Runbook](docs/LIVING_ASSISTANT_CALL_DEMO_RUNBOOK.md)
-- [BNB Skills Compatibility Plan](docs/BNB_SKILLS_COMPATIBILITY_PLAN.md)
-- [Arbitrage One Pager](docs/ARBITRAGE_ONE_PAGER.md)
-- [Arbitrage Module Spec v0](docs/ARBITRAGE_MODULE_SPEC.md)
-- [Arbitrage Module Tasks](docs/ARBITRAGE_MODULE_TASKS.md)
-- [Arbitrage Module Contract](docs/ARBITRAGE_MODULE_CONTRACT.md)
-- [Arbitrage Skill Mapping](docs/ARBITRAGE_SKILL_MAPPING.md)
-- [Arbitrage Adapter Plan](docs/ARBITRAGE_ADAPTER_PLAN.md)
-- [Arbitrage Output Examples](docs/ARBITRAGE_OUTPUT_EXAMPLES.md)
-- [Arbitrage Decision Reasons](docs/ARBITRAGE_DECISION_REASONS.md)
-- [Arbitrage Implementation Gap](docs/ARBITRAGE_IMPLEMENTATION_GAP.md)
-- [Arbitrage Demo Script](docs/ARBITRAGE_DEMO_SCRIPT.md)
-- [Vigil Agent-Comm One Pager](docs/AGENT_COMM_ONE_PAGER.md)
 - [Agent-Comm V2 Design](docs/AGENT_COMM_V2_DESIGN.md)
-- [Production Deployment Guide](docs/AGENT_COMM_PRODUCTION_DEPLOYMENT.md)
-- [Vigil Operations Guide](docs/ALPHAOS_OPERATIONS.md)
+- [Agent-Comm One Pager](docs/AGENT_COMM_ONE_PAGER.md)
+- [Arbitrage Module Spec](docs/ARBITRAGE_MODULE_SPEC.md)
+- [Living Assistant MVP Plan](docs/LIVING_ASSISTANT_MVP_PLAN.md)
+- [Champion Agent System](docs/CHAMPION_AGENT_SYSTEM.md)
+- [BNB Skills Compatibility Plan](docs/BNB_SKILLS_COMPATIBILITY_PLAN.md)
 
 ---
 
-## API Overview
+## 三个可复用生态贡献
 
-### Agent-Comm
-
-```text
-GET  /api/v1/agent-comm/status
-GET  /api/v1/agent-comm/contacts
-GET  /api/v1/agent-comm/messages
-POST /api/v1/agent-comm/cards/export
-POST /api/v1/agent-comm/cards/import
-POST /api/v1/agent-comm/connections/invite
-POST /api/v1/agent-comm/connections/:contactId/accept
-POST /api/v1/agent-comm/connections/:contactId/reject
-POST /api/v1/agent-comm/send/ping
-POST /api/v1/agent-comm/send/start-discovery
-```
-
-### Engine
-
-```text
-GET  /api/v1/metrics/today
-POST /api/v1/engine/mode
-GET  /api/v1/opportunities
-GET  /api/v1/trades
-GET  /api/v1/strategies/status
-```
-
-### Discovery
-
-```text
-POST /api/v1/discovery/sessions/start
-GET  /api/v1/discovery/sessions/:id/report
-POST /api/v1/discovery/sessions/:id/approve
-```
-
-### Living Assistant
-
-```text
-POST /api/v1/living-assistant/evaluate
-GET  /api/v1/living-assistant/demo/:scenarioName
-GET  /api/v1/living-assistant/capsules
-```
-
-### Growth & Observability
-
-```text
-GET  /api/v1/growth/share/latest
-GET  /api/v1/growth/moments
-GET  /api/v1/stream/metrics          (SSE)
-GET  /api/v1/backtest/snapshot
-POST /api/v1/replay/sandbox
-GET  /demo                           (live dashboard)
-```
+| 缺失层 | 贡献 | 价值 |
+|--------|------|------|
+| Agent 信任层 | Agent-Comm 链上铭文协议 | Agent 间零基础设施信任 + E2E 加密通信 |
+| 判断层 | Contact Policy Engine + 6 级注意力阶梯 | 被动 Skill → 主动感知的"大脑" |
+| 表达层 | Voice Brief Protocol + 多渠道投递 | Agent 像人一样联系用户 |
 
 ---
 
-## What stays the same in this phase
-
-This phase is intentionally conservative.
-
-We are **not** yet doing a risky full rename of:
-
-- internal class names
-- API path names
-- command names
-- skill folder names
-
-That comes later. This phase focuses on:
-
-- repository positioning
-- top-level story
-- first-impression clarity
-- migration direction
+*Vigil — 让 BNB 生态的每一个重要信号，都能用对的方式、在对的时间、找到对的人。*
 
 ---
 

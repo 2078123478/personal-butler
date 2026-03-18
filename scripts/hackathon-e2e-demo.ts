@@ -12,7 +12,7 @@ import { normalizeSignal } from "../src/skills/alphaos/living-assistant/signal-r
 import { createTTSProvider } from "../src/skills/alphaos/living-assistant/tts/provider-factory";
 import { generateVoiceBrief } from "../src/skills/alphaos/living-assistant/voice-brief";
 
-const FIXTURE_PATH = path.resolve(process.cwd(), "fixtures", "demo-scenarios", "critical-risk-escalation.json");
+const FIXTURE_PATH = path.resolve(process.cwd(), "fixtures", "demo-scenarios", process.argv[2] || "critical-risk-escalation.json");
 const CLONED_VOICE = "cosyvoice-v2-wilsen-078bd152fc744a33871a0c71b32a6025";
 const CALLBACK_TIMEOUT_MS = 60_000;
 

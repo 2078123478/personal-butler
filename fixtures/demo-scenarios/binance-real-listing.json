@@ -1,0 +1,56 @@
+{
+  "name": "binance-real-listing-kat",
+  "description": "Real Binance announcement: Katana (KAT) new listing with Seed Tag. High-value signal for ecosystem participants.",
+  "signal": {
+    "source": "binance-announcements",
+    "type": "new_listing",
+    "title": "Binance Will List Katana (KAT) with Seed Tag Applied",
+    "body": "Fellow Binancians, Binance will list Katana (KAT) and open trading for the following spot trading pairs at 2026-03-18 12:00 (UTC): KAT/USDT, KAT/USDC, KAT/BNB, KAT/FDUSD, KAT/TRY. Seed Tag will be applied to KAT. Users can now start depositing KAT in preparation for trading. Withdrawals will open the next day. KAT Listing Fee: 0 BNB. Please note: Seed Tag is applied to tokens with higher volatility and risk compared to other listed tokens. These tokens are closely monitored and may be subject to delisting if they no longer meet listing criteria.",
+    "metadata": {
+      "catalogId": 48,
+      "articleId": 268137,
+      "code": "01f1ef18ab314cc78cd3744760e4dc1f",
+      "token": "KAT",
+      "tokenFullName": "Katana",
+      "tradingPairs": [
+        "KAT/USDT",
+        "KAT/USDC",
+        "KAT/BNB",
+        "KAT/FDUSD",
+        "KAT/TRY"
+      ],
+      "listingTime": "2026-03-18T12:00:00Z",
+      "seedTag": true,
+      "listingFee": "0 BNB",
+      "depositOpen": true,
+      "withdrawalOpen": false
+    },
+    "urgency": "critical",
+    "chainId": 56,
+    "timestamp": "2026-03-13T01:45:36.337Z",
+    "kind": "binance_announcement",
+    "pair": "KAT/USDT",
+    "tokenAddress": "0xKAT",
+    "relevanceHint": "likely_relevant"
+  },
+  "userContext": {
+    "localHour": 22,
+    "recentContactCount": 1,
+    "activeStrategies": [
+      "new-listing-sniper"
+    ],
+    "watchlist": [
+      "KAT",
+      "BNB",
+      "PEPE"
+    ],
+    "riskTolerance": "moderate",
+    "quietHoursStart": 23,
+    "quietHoursEnd": 8,
+    "maxDailyContacts": 12
+  },
+  "policyConfig": {
+    "allowCallEscalation": false
+  },
+  "expectedAttentionLevel": "voice_brief"
+}
