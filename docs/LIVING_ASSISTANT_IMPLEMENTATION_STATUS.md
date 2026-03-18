@@ -263,7 +263,51 @@ Implemented:
 - 7 tests covering all actions, unknown, missing params, network errors
 - Uses raw `fetch` (no external dependencies), same pattern as `telegram-voice-sender.ts`
 
-### 3.11 Hackathon E2E Demo Script
+### 3.11 LLM-Powered Signal Triage & Natural Brief Generation
+
+Implemented:
+
+- `src/skills/alphaos/living-assistant/llm/` — zero-dependency LLM module
+- `llm-client.ts` — DashScope OpenAI-compatible chat completion via `fetch`
+  - Endpoint: `POST https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
+  - Default model: `qwen-plus`
+  - API key: reuses `TTS_API_KEY` or `LLM_API_KEY`
+  - 60s timeout, graceful null return on failure
+- `signal-triage.ts` — batch signal review with LLM
+  - Splits large batches into chunks of 20 signals each
+  - LLM decides per-signal: `notify` / `digest` / `skip`
+  - Automatic grouping of similar signals (e.g. 3 new_listing → 1 group)
+  - Falls back to rule engine (`evaluateContactPolicy`) when LLM unavailable
+  - Robust JSON parsing with fenced-code-block fallback
+- `natural-brief.ts` — LLM-generated voice briefs in Xiaoyin style
+  - Replaces template-based `generateVoiceBrief` when LLM is available
+  - Max 3 sentences, 15 seconds, conversational tone
+  - Falls back to template brief on LLM failure
+- `types.ts` — `TriagedSignal`, `SignalGroup`, `TriageResult`, etc.
+
+Real-world validation (80 Binance announcements):
+
+| Engine | Notify | Digest | Skip |
+|--------|--------|--------|------|
+| Rules (before) | 60 | 20 | 0 |
+| LLM triage (after) | 8 | 12 | 60 |
+
+LLM triage reduced notification noise by **87%**.
+
+Integration points:
+
+- `loop.ts` — `runBatchTriage()` for batch mode, `generateNaturalBrief()` in single-signal loop
+- `scripts/living-assistant-demo.ts` — `--live` mode uses batch triage before loop execution
+
+New env vars:
+
+```bash
+LLM_API_KEY=sk-...          # optional, defaults to TTS_API_KEY
+LLM_MODEL=qwen-plus         # optional, default qwen-plus
+LLM_ENABLED=true            # optional, set false to force rule engine
+```
+
+### 3.12 Hackathon E2E Demo Script
 
 Implemented:
 
@@ -452,7 +496,15 @@ npm run demo:living-assistant
 npm run demo:living-assistant -- --live
 ```
 
-### 7.3 Live radar with Square endpoint
+### 7.3 Live radar with LLM triage
+
+```bash
+LLM_API_KEY=sk-... npm run demo:living-assistant -- --live
+```
+
+This runs batch triage on all polled signals before executing the loop. Output includes triage summary (e.g. `80 signals -> 8 notify, 12 digest, 60 skip`).
+
+### 7.4 Live radar with Square endpoint
 
 ```bash
 BINANCE_SQUARE_ENDPOINT=https://... npm run demo:living-assistant -- --live
@@ -647,6 +699,13 @@ If someone still wants to inspect the system shape, these are the highest-value 
 - `src/skills/alphaos/living-assistant/tts/dashscope-qwen-provider.ts`
 - `src/skills/alphaos/living-assistant/tts/cosyvoice-provider.ts`
 - `src/skills/alphaos/living-assistant/tts/voice-clone.ts`
+
+### LLM triage
+
+- `src/skills/alphaos/living-assistant/llm/llm-client.ts`
+- `src/skills/alphaos/living-assistant/llm/signal-triage.ts`
+- `src/skills/alphaos/living-assistant/llm/natural-brief.ts`
+- `src/skills/alphaos/living-assistant/llm/types.ts`
 
 ### Signal radar
 

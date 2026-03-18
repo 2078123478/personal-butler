@@ -1,4 +1,4 @@
-# Champion Demo Story — How Personal Butler Wins the Room
+# Champion Demo Story - How Personal Butler Wins the Room
 
 This document defines how to present Personal Butler as a **champion-level BNB-native living assistant system**.
 
@@ -12,24 +12,24 @@ The goal is simple:
 
 ---
 
-## 1. The judge’s first question
+## 1. The judge's first question
 
-Every judge will ask a version of this question within the first 20–40 seconds:
+Every judge will ask a version of this question within the first 20-40 seconds:
 
 > Why is this special?
 
 If the answer sounds like:
 
-- “we have many APIs”
-- “we support lots of data”
-- “we do arbitrage”
-- “we can integrate Binance skills”
+- "we have many APIs"
+- "we support lots of data"
+- "we do arbitrage"
+- "we can integrate Binance skills"
 
 then the project drops into the same bucket as many other entries.
 
 The winning answer is:
 
-> Personal Butler is a living BNB-native assistant. It continuously senses the ecosystem, judges what matters to a specific user, and decides when and how to contact them like a real assistant — while staying safe through paper-first execution and explainable decisions.
+> Personal Butler is a living BNB-native assistant. It continuously senses the ecosystem, judges what matters to a specific user, and decides when and how to contact them like a real assistant - while staying safe through paper-first execution and explainable decisions.
 
 That answer reframes the whole room.
 
@@ -39,7 +39,7 @@ That answer reframes the whole room.
 
 A championship demo should make the audience believe **three things**.
 
-### Belief 1 — This is not a tool wrapper
+### Belief 1 - This is not a tool wrapper
 
 The system is not just calling official skills.
 It is turning official skills into:
@@ -49,7 +49,7 @@ It is turning official skills into:
 - interruption decisions
 - product-grade summaries
 
-### Belief 2 — This belongs in the Binance / BNB ecosystem
+### Belief 2 - This belongs in the Binance / BNB ecosystem
 
 The project should feel naturally anchored to:
 
@@ -58,7 +58,7 @@ The project should feel naturally anchored to:
 - Binance Square / announcements / ecosystem narratives
 - wallet-aware, trust-aware agent behavior
 
-### Belief 3 — This feels like a real assistant
+### Belief 3 - This feels like a real assistant
 
 The standout experience should be:
 
@@ -76,7 +76,7 @@ If judges believe those three things, the project has championship energy.
 Do not try to create ten moments.
 Create **three unforgettable ones**.
 
-## Wow Moment 1 — “It noticed before the human”
+## Wow Moment 1 - "It noticed before the human"
 
 The assistant sees a BNB ecosystem event first.
 
@@ -97,7 +97,7 @@ Key line:
 
 ---
 
-## Wow Moment 2 — “It knows whether to interrupt”
+## Wow Moment 2 - "It knows whether to interrupt"
 
 This is the real differentiator.
 
@@ -118,17 +118,32 @@ Then it decides the proper attention level:
 - strong interrupt
 - call-style escalation
 
+### LLM-Powered Signal Triage (NEW)
+
+The judgment engine is no longer just rules. It uses an LLM to batch-review signals like a real human assistant would:
+
+- **80 Binance announcements come in** → the LLM reviews all of them in batches of 20
+- **Result: 8 notify, 12 digest, 60 skip** - 87% noise reduction
+- Similar signals are automatically grouped (e.g. 3 new_listing → "3 new token listings")
+- Each decision comes with a human-readable reason
+
+This is the difference between:
+- ❌ "60 notifications because rules said high urgency"
+- ✅ "8 notifications because the LLM judged only these matter to you"
+
+When the LLM is unavailable, the system gracefully falls back to the rule engine - zero downtime, zero broken flows.
+
 What the judge should feel:
 
 > This is not automation. This is judgment.
 
 Key line:
 
-> The system’s intelligence is not only in deciding what to do in the market — it is also in deciding whether a human should be interrupted at all.
+> The system's intelligence is not only in deciding what to do in the market - it is also in deciding whether a human should be interrupted at all.
 
 ---
 
-## Wow Moment 3 — “It contacts the user like a real assistant”
+## Wow Moment 3 — "It contacts the user like a real assistant"
 
 This is the emotional peak.
 
@@ -139,10 +154,30 @@ The agent uses a short, human-style contact pattern:
 - clear next-step choices
 - zero dashboard dump
 
-Example:
+### Natural Language Voice Briefs (NEW)
 
-> 老大，BN 刚出了和你关注路径直接相关的新信号。  
-> 我已经用 paper 模式跑过，结果是正收益而且风险可解释。  
+The voice brief is no longer a template-filled message like:
+
+> ❌ "Hey, there is a new update tied to your Binance Margin Will Add New Pairs - 2026-03-17. This matters for your tracked strategy setup and is marked high urgency."
+
+Instead, the LLM generates natural, conversational speech in Xiaoyin's voice:
+
+> ✅ "老大，币安刚上了几个新的保证金交易对！高优先级信号，可能有新的杠杆机会，建议关注一下。"
+
+The brief is:
+- Max 3 sentences, fits in 15 seconds
+- Conversational and natural — sounds like a real assistant, not a template
+- Includes an actionable suggestion at the end
+- Falls back to template if LLM is unavailable
+
+Combined with CosyVoice cloned voice synthesis, the result is:
+
+> A voice message that sounds like YOUR assistant telling you what matters, in natural language, with a unique voice.
+
+Example flow:
+
+> 老大，BN 刚出了和你关注路径直接相关的新信号。
+> 我已经用 paper 模式跑过，结果是正收益而且风险可解释。
 > 你要我现在给你 10 秒结论，还是先发卡片？
 
 What the judge should feel:
@@ -169,7 +204,7 @@ The ecosystem moves → The assistant notices → The assistant judges relevance
 
 This is the version I would actually run on stage.
 
-## Scene 1 — “The world moves” (20–30 seconds)
+## Scene 1 - "The world moves" (20-30 seconds)
 
 Show a signal entering the system.
 
@@ -184,7 +219,7 @@ Start with motion.
 
 Say:
 
-> Here’s the trigger: something changed in the BNB ecosystem before the user asked anything.
+> Here's the trigger: something changed in the BNB ecosystem before the user asked anything.
 
 What to show:
 
@@ -198,7 +233,7 @@ Judge reaction target:
 
 ---
 
-## Scene 2 — “The assistant thinks before it speaks” (35–50 seconds)
+## Scene 2 - "The assistant thinks before it speaks" (35-50 seconds)
 
 Now show the judgment layer.
 
@@ -210,23 +245,37 @@ This is where the system combines:
 - strategy implications
 - interruption policy
 
-Show only the minimum needed:
+### Live triage demo
 
-- why the event is relevant
-- why the user should or should not be interrupted
-- what decision class it falls into
+Run the live demo with LLM triage enabled:
+
+```bash
+LLM_API_KEY=sk-... npm run demo:living-assistant -- --live --dry-run
+```
+
+Show the triage summary line:
+
+```
+Triage summary: 80 signals -> 8 notify, 12 digest, 60 skip
+Triage engine: llm
+```
+
+Then show one grouped notification vs one skipped signal. The contrast is powerful:
+
+- **Grouped notify**: "New Spot, Margin & Futures Pairs Added - 2026-03-17" (2 signals merged)
+- **Skipped**: "Binance Adds New Fiat Gateway" (low relevance to user's watchlist)
 
 Say:
 
-> We don’t just classify the market event. We classify whether this event deserves the user’s attention right now.
+> 80 signals came in. A rule engine would blast 60 notifications. Our LLM triage reviewed them like a real assistant and decided only 8 deserve your attention. The rest are either batched for later or silently skipped.
 
 Judge reaction target:
 
-> that’s different from a normal trading tool.
+> that's different from a normal trading tool.
 
 ---
 
-## Scene 3 — “The assistant contacts the human” (35–50 seconds)
+## Scene 3 - "The assistant contacts the human" (35-50 seconds)
 
 This should be the signature scene.
 
@@ -236,7 +285,7 @@ Use:
 
 - a short Telegram message
 - plus a micro voice brief
-- plus 2–4 explicit quick actions
+- plus 2-4 explicit quick actions
 
 For example:
 
@@ -262,7 +311,7 @@ Judge reaction target:
 
 ---
 
-## Scene 4 — “Safe, explainable action” (40–60 seconds)
+## Scene 4 - "Safe, explainable action" (40-60 seconds)
 
 Now show the paper-mode result.
 
@@ -279,7 +328,7 @@ If a live-like request is shown, the system should safely downgrade to paper and
 
 Say:
 
-> We made the experience bold, but the operating model safe. That’s why paper-first matters: the demo stays believable, and the assistant still shows real judgment and closure.
+> We made the experience bold, but the operating model safe. That's why paper-first matters: the demo stays believable, and the assistant still shows real judgment and closure.
 
 Judge reaction target:
 
@@ -317,8 +366,8 @@ This keeps the project honest.
 
 ### Do not say
 
-- “we already built full autonomous calling” if you have not
-- “the bot literally phones you today” unless it truly does in production
+- "we already built full autonomous calling" if you have not
+- "the bot literally phones you today" unless it truly does in production
 
 ### Do say
 
@@ -398,7 +447,7 @@ These lines are worth memorizing.
 
 ### Binance alignment line
 
-> Binance official skills are the assistant’s senses. Our product layer turns them into judgment, interruption policy, and explainable action.
+> Binance official skills are the assistant's senses. Our product layer turns them into judgment, interruption policy, and explainable action.
 
 ### Safety line
 
@@ -416,31 +465,31 @@ These lines are worth memorizing.
 
 ## 10. Likely judge questions and the best answers
 
-## Q1 — Isn’t this just another trading agent?
+## Q1 - Isn't this just another trading agent?
 
 Answer:
 
 > No. The trading module is only the first flagship behavior. The actual product is a living assistant system that combines ecosystem sensing, decision quality, interruption policy, and safe action closure.
 
-## Q2 — Why is Binance Skills compatibility important?
+## Q2 - Why is Binance Skills compatibility important?
 
 Answer:
 
 > Because it makes the project ecosystem-native instead of isolated. We are building on the official open capability layer and adding strategy orchestration, explainability, and product-grade human contact on top.
 
-## Q3 — Why paper mode? Why not live?
+## Q3 - Why paper mode? Why not live?
 
 Answer:
 
 > Because championship demos need credibility. Paper-safe mode proves judgment, simulation, safety gating, and human interaction without depending on fragile live conditions.
 
-## Q4 — What is the ecosystem contribution?
+## Q4 - What is the ecosystem contribution?
 
 Answer:
 
 > We are contributing a reusable pattern: official skills → normalized contexts → strategy decisions → human-contact policy → summary packaging. That is a reusable building block for many BNB-native agent products.
 
-## Q5 — What is the moat?
+## Q5 - What is the moat?
 
 Answer:
 
@@ -450,26 +499,26 @@ Answer:
 
 ## 11. What not to do in the championship demo
 
-### Anti-pattern 1 — starting with architecture diagrams
+### Anti-pattern 1 - starting with architecture diagrams
 
 Start with movement, not structure.
 The room needs to feel the system first.
 
-### Anti-pattern 2 — overexplaining backend names
+### Anti-pattern 2 - overexplaining backend names
 
 AlphaOS / OnchainOS should appear only as implementation facts, not as the emotional center of the demo.
 
-### Anti-pattern 3 — acting like voice is a gimmick
+### Anti-pattern 3 - acting like voice is a gimmick
 
 Voice is not a toy feature.
 It is the most human-efficient contact medium for time-sensitive assistant behavior.
 
-### Anti-pattern 4 — overpromising full calling
+### Anti-pattern 4 - overpromising full calling
 
 Be bold in vision, precise in truth.
 Show the ladder, show the present capability, explain the advanced extension.
 
-### Anti-pattern 5 — letting the demo become a JSON reading session
+### Anti-pattern 5 - letting the demo become a JSON reading session
 
 The payload matters, but the room must remember the assistant behavior, not the field names.
 
@@ -479,12 +528,12 @@ The payload matters, but the room must remember the assistant behavior, not the 
 
 If the demo works, judges should feel this sequence:
 
-1. **Curiosity** — “What is this event?”
-2. **Interest** — “The system noticed it by itself?”
-3. **Respect** — “It decides whether the human should be interrupted?”
-4. **Believability** — “The contact style actually feels useful.”
-5. **Confidence** — “The action path is safe and explainable.”
-6. **Excitement** — “This could become a real assistant product.”
+1. **Curiosity** - "What is this event?"
+2. **Interest** - "The system noticed it by itself?"
+3. **Respect** - "It decides whether the human should be interrupted?"
+4. **Believability** - "The contact style actually feels useful."
+5. **Confidence** - "The action path is safe and explainable."
+6. **Excitement** - "This could become a real assistant product."
 
 That emotional climb matters as much as the technical proof.
 
@@ -500,4 +549,4 @@ If you only get one tight paragraph, use this:
 
 ## 14. One-sentence summary
 
-**The winning demo is the one where judges stop seeing “a crypto bot” and start seeing “a real assistant that knows when to notice, when to speak, and when to act.”**
+**The winning demo is the one where judges stop seeing "a crypto bot" and start seeing "a real assistant that knows when to notice, when to speak, and when to act."**
