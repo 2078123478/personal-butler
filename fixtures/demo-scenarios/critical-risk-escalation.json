@@ -6,18 +6,35 @@
     "source": "token_risk_change",
     "type": "risk_alert",
     "title": "Critical risk shift on watched token",
-    "body": "Privileged owner action detected with exploit-like pattern.",
+    "body": "Token PEPE (0x6982...C85d) on BSC: owner wallet executed removeAllLimits() followed by a 2.8M USDT liquidity removal in a single block. Contract ownership was NOT renounced. On-chain audit flags: unlimited mint capability detected, honeypot risk score jumped from 12 to 89. Total locked liquidity dropped from $4.2M to $1.4M in 3 minutes. 847 holders affected. This pattern matches 94% of historical rug-pull signatures.",
     "urgency": "critical",
     "relevanceHint": "likely_relevant",
-    "tokenAddress": "0x1111111111111111111111111111111111111111",
-    "chainId": 1,
-    "detectedAt": "2026-03-17T11:45:00.000Z"
+    "tokenAddress": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+    "chainId": 56,
+    "pair": "PEPE/USDT",
+    "detectedAt": "2026-03-18T11:45:00.000Z",
+    "metadata": {
+      "riskScoreBefore": 12,
+      "riskScoreAfter": 89,
+      "liquidityBefore": 4200000,
+      "liquidityAfter": 1400000,
+      "liquidityRemovedUsd": 2800000,
+      "holdersAffected": 847,
+      "rugPullConfidence": 0.94,
+      "ownerAction": "removeAllLimits() + removeLiquidity()",
+      "contractRenounced": false,
+      "mintCapability": true
+    }
   },
   "userContext": {
     "localHour": 11,
     "recentContactCount": 1,
-    "activeStrategies": ["risk-monitor"],
-    "watchlist": ["0x1111111111111111111111111111111111111111"],
+    "activeStrategies": [
+      "risk-monitor"
+    ],
+    "watchlist": [
+      "0x6982508145454Ce325dDbE47a25d4ec3d2311933"
+    ],
     "riskTolerance": "conservative",
     "quietHoursStart": 23,
     "quietHoursEnd": 8,

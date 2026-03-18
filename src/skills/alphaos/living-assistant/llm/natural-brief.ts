@@ -83,10 +83,13 @@ function formatTargetContext(target: NaturalBriefTarget): string {
       source: target.source,
       type: target.type,
       title: target.title,
+      body: target.body,
       urgency: target.urgency,
       pair: target.pair,
       tokenAddress: target.tokenAddress,
+      chainId: target.chainId,
       detectedAt: target.detectedAt,
+      metadata: target.metadata,
     });
   }
 
@@ -100,10 +103,13 @@ function formatTargetContext(target: NaturalBriefTarget): string {
       source: signal.source,
       type: signal.type,
       title: signal.title,
+      body: signal.body,
       urgency: signal.urgency,
       pair: signal.pair,
       tokenAddress: signal.tokenAddress,
+      chainId: signal.chainId,
       detectedAt: signal.detectedAt,
+      metadata: signal.metadata,
     })),
   });
 }
@@ -117,12 +123,15 @@ function buildPrompt(target: NaturalBriefTarget, decision: ContactDecision, lang
     formatTargetContext(target),
     "",
     "Write a short voice brief in Xiaoyin style:",
-    "- energetic, natural, conversational",
-    "- max 3 sentences",
-    "- should fit in 15 seconds",
-    "- if grouped signals, summarize key points instead of reading one by one",
-    "- end with one actionable suggestion",
-    "- output plain text only",
+    "- energetic, natural, conversational — like a real assistant talking to her boss",
+    "- max 3 sentences, should fit in 15 seconds",
+    "- CRITICAL: you MUST include the specific facts from the signal (what happened, which token/pair, what data changed, what numbers matter)",
+    "- NEVER say vague things like '快去查' or '检查一下' without first telling the user WHAT happened",
+    "- sentence 1: what exactly happened (specific event, token, data)",
+    "- sentence 2: why it matters / how urgent it is",
+    "- sentence 3: one concrete actionable suggestion",
+    "- if grouped signals, summarize the key specifics instead of reading one by one",
+    "- output plain text only, no markdown",
   ].join("\n");
 }
 
