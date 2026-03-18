@@ -8,7 +8,8 @@
 2. 通过 6 级注意力阶梯决定是否打扰用户（`silent` → `call_escalation`），内置 quiet hours 降级、频率限制、watchlist 相关性判断。
 3. 采用微语音简报协议（One-Breath）：15 秒内、3 句话内，支持中英双语（`zh/en`）。
 4. 完整 demo-safe 评估链路已实现：`signal -> policy -> brief`，可在 paper-safe 模式下稳定演示判断质量。
-5. API 路由已上线，可直接评测：
+5. 端到端闭环已验证：信号感知 → 判断引擎 → CosyVoice 克隆音色语音播报 → Telegram 投递（语音+交互按钮）→ 用户响应 → 回调处理 → 消息状态更新。
+6. API 路由已上线，可直接评测：
 
 ```text
 POST /api/v1/living-assistant/evaluate
