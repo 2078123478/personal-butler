@@ -295,6 +295,7 @@ function buildOptionalTTS(env: NodeJS.ProcessEnv = process.env): DemoRuntime {
   const apiKey = readOptionalEnv("TTS_API_KEY", env);
   const model = readOptionalEnv("TTS_MODEL", env);
   const voice = readOptionalEnv("TTS_VOICE", env);
+  const CLONED_VOICE = "cosyvoice-v2-wilsen-078bd152fc744a33871a0c71b32a6025";
   const language = readOptionalTTSLanguage("TTS_LANGUAGE", env);
   const instructions = readOptionalEnv("TTS_INSTRUCTIONS", env);
   const optimizeInstructions = readOptionalBoolean("TTS_OPTIMIZE_INSTRUCTIONS", env);
@@ -336,18 +337,19 @@ function buildOptionalTTS(env: NodeJS.ProcessEnv = process.env): DemoRuntime {
 
     const endpoint = readOptionalEnv("TTS_DASHSCOPE_ENDPOINT", env);
     const format = normalizeTTSFormat(readOptionalEnv("TTS_FORMAT", env), "wav");
+    const cosyVoice = voice || CLONED_VOICE;
     return {
       ttsProvider: createTTSProvider({
         type: "cosyvoice",
         apiKey,
         ...(endpoint ? { endpoint } : {}),
         ...(model ? { model } : {}),
-        ...(voice ? { defaultVoice: voice } : {}),
+        defaultVoice: cosyVoice,
         defaultFormat: format,
       }),
       ttsOptions: {
         format,
-        ...(voice ? { voice } : {}),
+        voice: cosyVoice,
         ...(language ? { language } : {}),
       },
     };

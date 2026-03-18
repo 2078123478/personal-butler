@@ -13,7 +13,7 @@ import { createTTSProvider } from "../src/skills/alphaos/living-assistant/tts/pr
 import { generateVoiceBrief } from "../src/skills/alphaos/living-assistant/voice-brief";
 
 const FIXTURE_PATH = path.resolve(process.cwd(), "fixtures", "demo-scenarios", "critical-risk-escalation.json");
-const DEFAULT_TTS_VOICE = "cosyvoice-v2-wilsen-078bd152fc744a33871a0c71b32a6025";
+const CLONED_VOICE = "cosyvoice-v2-wilsen-078bd152fc744a33871a0c71b32a6025";
 const CALLBACK_TIMEOUT_MS = 60_000;
 
 interface DemoFixture {
@@ -168,7 +168,7 @@ async function main(): Promise<void> {
   const botToken = requireEnv("TELEGRAM_BOT_TOKEN");
   const chatId = requireEnv("TELEGRAM_CHAT_ID");
   const ttsApiKey = requireEnv("TTS_API_KEY");
-  const ttsVoice = process.env.TTS_VOICE?.trim() || DEFAULT_TTS_VOICE;
+  const ttsVoice = CLONED_VOICE;
 
   printHeader("🎬 Living Assistant Hackathon E2E Demo");
   printLine(`Fixture: ${path.relative(process.cwd(), FIXTURE_PATH)}`);
