@@ -2,13 +2,13 @@
 
 ## 0) 真正的差异化：主动生活助手
 
-在当前仓库里，Living Assistant 已经从蓝图变成可运行能力（Phase 1-5 全部落地）：
+在当前仓库里，Living Assistant 已经从蓝图变成可运行能力（Phase 1-6 全部落地）：
 
 1. 不是等用户问，而是主动感知 BNB 生态信号（Signal Radar），并统一归一化为 `NormalizedSignal`。
 2. 通过 6 级注意力阶梯决定是否打扰用户（`silent` → `call_escalation`），内置 quiet hours 降级、频率限制、watchlist 相关性判断。
-3. 采用微语音简报协议（One-Breath）：15 秒内、3 句话内，支持中英双语（`zh/en`）。
-4. 完整 demo-safe 评估链路已实现：`signal -> policy -> brief`，可在 paper-safe 模式下稳定演示判断质量。
-5. 端到端闭环已验证：信号感知 → 判断引擎 → CosyVoice 克隆音色语音播报 → Telegram 投递（语音+交互按钮）→ 用户响应 → 回调处理 → 消息状态更新。
+3. **LLM 驱动的信号审核**：80 条 Binance 公告 → LLM 批量审阅 → 8 条通知 / 12 条摘要 / 60 条跳过，噪音降低 87%。同类信号自动聚合（如 3 条 new_listing → 1 条摘要）。LLM 不可用时自动降级到规则引擎。
+4. **自然语言语音简报**：不再是模板拼接，而是 LLM 生成小音风格的口语化简报（≤3 句话，15 秒内），配合 CosyVoice 克隆音色合成。
+5. 端到端闭环已验证：信号感知 → LLM 审核 → 自然语言简报 → CosyVoice 克隆音色语音播报 → Telegram 投递（语音+交互按钮）→ 用户响应 → 回调处理 → 消息状态更新。
 6. API 路由已上线，可直接评测：
 
 ```text
