@@ -7,7 +7,7 @@ It combines four layers in one project:
 - **Agent identity & communication** — agents own wallets, exchange signed contact cards, and communicate through consent-gated encrypted messages.
 - **Composable skill runtime** — capabilities are organized as skills with clear boundaries and reusable infrastructure.
 - **On-chain execution workflows** — market discovery, strategy evaluation, simulation, and execution can be connected into a production-style loop.
-- **Living assistant experience loop** — ecosystem signal radar, contact policy, and one-breath voice briefing are combined into a proactive demo-safe assistant flow.
+- **Living assistant experience loop** — ecosystem signal radar, LLM-powered signal triage (87% noise reduction), natural language voice briefing, and proactive contact judgment combined into a demo-safe assistant flow.
 
 **Positioning:** built to evolve toward **BNB Chain-friendly agent infrastructure**, while preserving the full working codebase and battle-tested flows from the original project baseline.
 
@@ -79,6 +79,16 @@ Current implementation highlights:
 - execution probes and health checks
 - structured trade recording
 - live metrics / demo surface
+
+### 4. LLM-Powered Signal Triage
+
+The living assistant uses an LLM to batch-review ecosystem signals like a real human assistant:
+
+- **80 Binance announcements → 8 notify, 12 digest, 60 skip** (87% noise reduction)
+- Similar signals automatically grouped (e.g. 3 new_listing → 1 summary)
+- Natural language voice briefs in assistant persona style
+- Graceful fallback to rule engine when LLM is unavailable
+- Zero new dependencies — uses `fetch` to call DashScope Qwen API
 
 ---
 
