@@ -1,8 +1,8 @@
-# Personal Butler for BNB Chain — One Pager
+# Vigil for BNB Chain — One Pager
 
 ## What this project is
 
-**Personal Butler is a private, wallet-native, chain-aware AI agent framework**.
+**Vigil is a private, wallet-native, chain-aware AI agent framework**.
 
 It is designed around a simple belief:
 
@@ -15,7 +15,7 @@ Today, the repository combines four working pieces:
 3. **Execution-ready workflows** for discovery, evaluation, simulation, execution, and reporting
 4. **Living Assistant loop** for proactive signal sensing, interruption policy, and one-breath micro-brief delivery
 
-In short: **Personal Butler is trying to become practical agent infrastructure, not just an AI demo.**
+In short: **Vigil is trying to become practical agent infrastructure, not just an AI demo.**
 
 ---
 
@@ -39,7 +39,7 @@ That maps well to BNB Chain's cost profile and builder ecosystem.
 
 Most AI systems still treat identity as an app login.
 
-Personal Butler treats identity as a **wallet-backed cryptographic primitive**:
+Vigil treats identity as a **wallet-backed cryptographic primitive**:
 
 - agents own keys
 - agents export signed contact cards
@@ -60,7 +60,7 @@ The harder and more valuable problem is the infrastructure between them:
 - how actions become observable and replayable
 - how operators know whether the system is trustworthy
 
-That is exactly where Personal Butler is strongest.
+That is exactly where Vigil is strongest.
 
 ### 4. Proactive assistant behavior is the missing layer in many current agent stacks
 
@@ -127,7 +127,7 @@ This is the difference between “agent theater” and “agent operations”.
 
 ### Living Assistant: proactive ecosystem-aware agent
 
-A new MVP layer now makes Personal Butler proactive instead of purely reactive.
+A new MVP layer now makes Vigil proactive instead of purely reactive.
 
 - **Signal Radar** senses BNB ecosystem events before the user asks and normalizes them into `NormalizedSignal`.
 - **Contact Policy** decides whether and how to interrupt the user with a 6-level attention ladder (`silent` → `call_escalation`), plus quiet-hours degradation, rate limiting, and watchlist relevance checks.
@@ -148,7 +148,7 @@ It needs building blocks that help developers answer:
 - How do operators verify that the execution loop is real?
 - How do we make agent workflows composable across products?
 
-Personal Butler contributes to that stack in a way that is:
+Vigil contributes to that stack in a way that is:
 
 - **practical** — grounded in operator workflows
 - **modular** — capabilities are skill-based
@@ -161,7 +161,7 @@ Personal Butler contributes to that stack in a way that is:
 
 The repository is in a deliberate transition stage.
 
-Externally, the project is now positioned as **Personal Butler**.
+Externally, the project is now positioned as **Vigil**.
 Internally, some modules and documents still carry historical names such as **AlphaOS** and **OnchainOS**.
 
 This is intentional.
@@ -223,7 +223,7 @@ The architecture can evolve toward multiple BNB Chain-native directions:
 
 ## Why this can be a strong ecosystem project
 
-The biggest upside of Personal Butler is not a single feature.
+The biggest upside of Vigil is not a single feature.
 
 The upside is that it can sit at the intersection of:
 
@@ -235,7 +235,7 @@ The upside is that it can sit at the intersection of:
 
 That is a much stronger long-term position than “another agent front-end”.
 
-If developed well, Personal Butler can become a **BNB Chain-friendly agent infrastructure layer** that helps both builders and end users.
+If developed well, Vigil can become a **BNB Chain-friendly agent infrastructure layer** that helps both builders and end users.
 
 ---
 

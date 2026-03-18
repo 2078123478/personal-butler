@@ -1,6 +1,6 @@
 # Arbitrage Module Spec v0
 
-This document defines the first flagship strategy module for Personal Butler:
+This document defines the first flagship strategy module for Vigil:
 
 > a **Binance Skills-compatible arbitrage module** for the **BNB ecosystem**, built on top of the current OnchainOS-based execution backend.
 
@@ -47,7 +47,7 @@ Instead, it should look like:
 - a strategy module
 - a reusable capability layer
 - a demoable product flow
-- a proof that Personal Butler can turn official skills into intelligent action
+- a proof that Vigil can turn official skills into intelligent action
 
 ---
 
@@ -55,7 +55,7 @@ Instead, it should look like:
 
 ### External framing
 
-- Personal Butler = product layer
+- Vigil = product layer
 - Arbitrage Module = flagship strategy module
 - Binance official skills = ecosystem capability layer
 - Agent-Comm / Judge = trust and decision support
@@ -502,4 +502,4 @@ These should remain the implementation anchors while the external module framing
 
 ## 17. One-sentence summary
 
-**The Arbitrage Module should become the first Binance Skills-compatible flagship strategy module in Personal Butler: a BNB ecosystem-native layer that transforms official skill capabilities into risk-aware, simulation-backed, execution-ready action.**
+**The Arbitrage Module should become the first Binance Skills-compatible flagship strategy module in Vigil: a BNB ecosystem-native layer that transforms official skill capabilities into risk-aware, simulation-backed, execution-ready action.**

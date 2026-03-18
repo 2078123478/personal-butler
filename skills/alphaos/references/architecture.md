@@ -1,8 +1,8 @@
-# Personal Butler Execution Architecture
+# Vigil Execution Architecture
 
 ## Skill Ecosystem
 
-Personal Butler currently ships with three cooperating skills:
+Vigil currently ships with three cooperating skills:
 
 | Skill | Responsibility | Code Path |
 |-------|---------------|-----------|

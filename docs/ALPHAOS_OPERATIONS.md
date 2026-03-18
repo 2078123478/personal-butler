@@ -1,6 +1,6 @@
-# Personal Butler Operations Guide (Current Execution Stack)
+# Vigil Operations Guide (Current Execution Stack)
 
-A step-by-step operator runbook for the current Personal Butler execution stack — from configuration to data export.
+A step-by-step operator runbook for the current Vigil execution stack — from configuration to data export.
 
 > Note: some environment variables, API paths, and code modules still use historical names such as `ONCHAINOS` and `alphaos`. They are preserved here because they reflect the working implementation.
 

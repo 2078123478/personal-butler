@@ -1,6 +1,6 @@
-# Champion Demo Story - How Personal Butler Wins the Room
+# Champion Demo Story - How Vigil Wins the Room
 
-This document defines how to present Personal Butler as a **champion-level BNB-native living assistant system**.
+This document defines how to present Vigil as a **champion-level BNB-native living assistant system**.
 
 It is not a backend walkthrough.
 It is not a feature checklist.
@@ -29,7 +29,7 @@ then the project drops into the same bucket as many other entries.
 
 The winning answer is:
 
-> Personal Butler is a living BNB-native assistant. It continuously senses the ecosystem, judges what matters to a specific user, and decides when and how to contact them like a real assistant - while staying safe through paper-first execution and explainable decisions.
+> Vigil is a living BNB-native assistant. It continuously senses the ecosystem, judges what matters to a specific user, and decides when and how to contact them like a real assistant - while staying safe through paper-first execution and explainable decisions.
 
 That answer reframes the whole room.
 
@@ -443,7 +443,7 @@ These lines are worth memorizing.
 
 ### Opening line
 
-> Personal Butler is not a bot waiting for prompts. It is a living BNB-native assistant that senses the ecosystem, judges what matters, and decides when to contact a human.
+> Vigil is not a bot waiting for prompts. It is a living BNB-native assistant that senses the ecosystem, judges what matters, and decides when to contact a human.
 
 ### Binance alignment line
 
@@ -543,7 +543,7 @@ That emotional climb matters as much as the technical proof.
 
 If you only get one tight paragraph, use this:
 
-> Personal Butler is a living BNB-native assistant built on Binance official skills. Instead of waiting for prompts, it senses ecosystem signals, judges whether they matter to a specific user, decides whether that user should be interrupted, and contacts them in a short, human-like way. It then closes the loop through safe paper-mode simulation, explainable decisions, and reusable summary packaging.
+> Vigil is a living BNB-native assistant built on Binance official skills. Instead of waiting for prompts, it senses ecosystem signals, judges whether they matter to a specific user, decides whether that user should be interrupted, and contacts them in a short, human-like way. It then closes the loop through safe paper-mode simulation, explainable decisions, and reusable summary packaging.
 
 ---
 

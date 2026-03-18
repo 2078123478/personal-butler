@@ -1,9 +1,9 @@
-# Champion Agent System — Personal Butler as a Living BNB-Native Assistant
+# Champion Agent System — Vigil as a Living BNB-Native Assistant
 
-This document defines the **champion-level product direction** for Personal Butler.
+This document defines the **champion-level product direction** for Vigil.
 
 It is not just a stronger arbitrage demo.
-It is a plan to turn Personal Butler into a **living BNB-native assistant system** that:
+It is a plan to turn Vigil into a **living BNB-native assistant system** that:
 
 - continuously senses the Binance / BNB ecosystem
 - judges relevance and urgency on behalf of the user
@@ -13,13 +13,13 @@ It is a plan to turn Personal Butler into a **living BNB-native assistant system
 
 In one line:
 
-> Personal Butler should feel less like a bot that waits for commands, and more like a real human assistant who knows when to quietly observe, when to brief you, and when to urgently call you.
+> Vigil should feel less like a bot that waits for commands, and more like a real human assistant who knows when to quietly observe, when to brief you, and when to urgently call you.
 
 ---
 
 ## 1. Champion standard
 
-To be judged as a champion-level system, Personal Butler should target **three simultaneous 10/10s**:
+To be judged as a champion-level system, Vigil should target **three simultaneous 10/10s**:
 
 ### 1. Creativity = 10/10
 
@@ -56,7 +56,7 @@ The system should feel like a **real assistant**:
 
 ## 2. The product definition
 
-Personal Butler should evolve into:
+Vigil should evolve into:
 
 ## **A BNB Ecosystem Living Assistant**
 
@@ -72,7 +72,7 @@ A living assistant:
 - proposes action with context and judgment
 - records the outcome and learns the pattern
 
-This means Personal Butler is not only:
+This means Vigil is not only:
 
 - a strategy engine
 - a compatibility layer
@@ -98,7 +98,7 @@ Most projects focus on:
 - calling tools
 - producing an answer
 
-Champion-level Personal Butler should also solve:
+Champion-level Vigil should also solve:
 
 - when to stay silent
 - when to send a short alert
@@ -597,4 +597,4 @@ The champion direction should not degrade into:
 
 ## 13. One-sentence summary
 
-**Personal Butler should become a living BNB-native assistant system that senses the Binance ecosystem, judges what matters, decides when to interrupt the user, and closes the loop through safe, explainable, human-like action.**
+**Vigil should become a living BNB-native assistant system that senses the Binance ecosystem, judges what matters, decides when to interrupt the user, and closes the loop through safe, explainable, human-like action.**

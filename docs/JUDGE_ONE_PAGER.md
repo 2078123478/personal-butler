@@ -1,4 +1,4 @@
-# Personal Butler 执行能力一页说明
+# Vigil 执行能力一页说明
 
 ## 0) 真正的差异化：主动生活助手
 
@@ -27,7 +27,7 @@ DeFi 里最稀缺的不是“策略想法”，而是**可信执行**：
 - 很多系统能回测漂亮，但难以证明线上执行路径真实可用。
 - 很多系统能做单点优化，但缺少可复用的“执行型 agent 底座”。
 
-**Personal Butler 当前的执行层目标**，不是做一个短期套利脚本，而是把这条链路标准化：
+**Vigil 当前的执行层目标**，不是做一个短期套利脚本，而是把这条链路标准化：
 
 ```text
 发现机会 -> 风险评估 -> 模拟验证 -> 执行 -> 记录 -> 传播
@@ -46,7 +46,7 @@ DeFi 里最稀缺的不是“策略想法”，而是**可信执行**：
 3. 我们把链路健康度暴露为接口（status / probe / path），
    让评估不止看收益，还能看“执行基础设施是否可靠”。
 
-换句话说：**OnchainOS 在当前仓库里承担的是执行基础设施层角色**，而 Personal Butler 面向外部呈现的是更完整的 agent 能力、执行能力与生态叙事。
+换句话说：**OnchainOS 在当前仓库里承担的是执行基础设施层角色**，而 Vigil 面向外部呈现的是更完整的 agent 能力、执行能力与生态叙事。
 
 ---
 
@@ -142,7 +142,7 @@ riskAdjustedNetEdgeBps >= minNetEdgeBps(mode)
 
 ## 8) 代码锚点
 
-> 说明：当前代码路径仍保留历史模块名 `alphaos` / `onchainos`，这是实现层命名，不影响对外的 Personal Butler 叙事。
+> 说明：当前代码路径仍保留历史模块名 `alphaos` / `onchainos`，这是实现层命名，不影响对外的 Vigil 叙事。
 
 - 策略逻辑：`src/skills/alphaos/plugins/dex-arbitrage.ts`
 - 成本模型：`src/skills/alphaos/runtime/cost-model.ts`

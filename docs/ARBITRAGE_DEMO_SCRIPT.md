@@ -48,7 +48,7 @@ Use **assisted-live** only if:
 
 Open with this idea:
 
-> Personal Butler takes Binance ecosystem capabilities, enriches them with risk and strategy logic, and turns them into execution-ready arbitrage decisions instead of just raw market responses.
+> Vigil takes Binance ecosystem capabilities, enriches them with risk and strategy logic, and turns them into execution-ready arbitrage decisions instead of just raw market responses.
 
 ---
 
@@ -74,7 +74,7 @@ Show the minimum needed to make the intelligence obvious.
 
 > We’re not building a generic bot or a raw trading API wrapper.
 > We’re building a Binance Skills-compatible strategy module for the BNB ecosystem.
-> The current backend is powered by our existing OnchainOS runtime, but the product layer is Personal Butler.
+> The current backend is powered by our existing OnchainOS runtime, but the product layer is Vigil.
 
 ### What to show
 
@@ -225,7 +225,7 @@ Use this compact script if time is tight.
 
 ### Opening
 
-> Personal Butler is our product layer for BNB ecosystem-native agent workflows.
+> Vigil is our product layer for BNB ecosystem-native agent workflows.
 > This arbitrage module is our first flagship strategy module, and it’s designed to be compatible with Binance’s open skills ecosystem.
 
 ### Opportunity

@@ -1,12 +1,12 @@
-# Personal Butler Agent-Comm — One Pager
+# Vigil Agent-Comm — One Pager
 
-**Agent-Comm is the trust and communication layer inside Personal Butler**.
+**Agent-Comm is the trust and communication layer inside Vigil**.
 
 It is a contact-first, wallet-native, chain-aware protocol for autonomous agents.
 
 The idea is simple:
 
-> if Personal Butler is the broader agent framework, then Agent-Comm is the part that gives agents portable identity, explicit trust, and encrypted coordination.
+> if Vigil is the broader agent framework, then Agent-Comm is the part that gives agents portable identity, explicit trust, and encrypted coordination.
 
 It is built for real operators: you can share a public contact card, require explicit approval before trust is granted, and optionally wake an orchestrator when inbound work completes.
 
@@ -21,11 +21,11 @@ It is built for real operators: you can share a public contact card, require exp
 
 ---
 
-## Why this matters inside Personal Butler
+## Why this matters inside Vigil
 
 Many AI agent projects stop at chat, prompts, or orchestration.
 
-Personal Butler is trying to build something more practical:
+Vigil is trying to build something more practical:
 
 - private AI agents with wallet-backed identity
 - trusted agent-to-agent coordination
@@ -185,7 +185,7 @@ It needs a credible answer to:
 
 Agent-Comm contributes exactly to that layer.
 
-It is not the entire Personal Butler story, but it is one of the strongest reasons the project can evolve into **real agent infrastructure instead of a one-off agent demo**.
+It is not the entire Vigil story, but it is one of the strongest reasons the project can evolve into **real agent infrastructure instead of a one-off agent demo**.
 
 ---
 

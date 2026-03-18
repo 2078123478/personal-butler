@@ -1324,7 +1324,7 @@ function demoHtml(): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Personal Butler Live Demo</title>
+  <title>Vigil Live Demo</title>
   <style>
     :root {
       --bg: radial-gradient(circle at 10% 20%, #0f172a 0%, #111827 38%, #041022 100%);
@@ -1376,7 +1376,7 @@ function demoHtml(): string {
   </style>
 </head>
 <body>
-  <h1>Personal Butler Execution Console</h1>
+  <h1>Vigil Execution Console</h1>
   <div class="grid">
     <div class="card"><h2>Today Net PnL</h2><div id="net" class="kpi">0.00</div></div>
     <div class="card"><h2>Trades</h2><div id="trades" class="kpi">0</div></div>

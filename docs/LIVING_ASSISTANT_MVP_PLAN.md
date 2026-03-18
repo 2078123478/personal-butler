@@ -641,4 +641,4 @@ That is enough to demonstrate the champion-level living assistant concept.
 
 ## 12. One-sentence summary
 
-**This MVP builds the minimum viable signal radar, contact policy engine, and voice brief generator to prove that Personal Butler can sense, judge, and contact a human like a real assistant — safely, explainably, and demo-ready.**
+**This MVP builds the minimum viable signal radar, contact policy engine, and voice brief generator to prove that Vigil can sense, judge, and contact a human like a real assistant — safely, explainably, and demo-ready.**

@@ -1073,7 +1073,7 @@ async function runLoopScenario(
 }
 
 async function main(): Promise<void> {
-  console.log("Personal Butler — Living Assistant Demo");
+  console.log("Vigil — Living Assistant Demo");
   const cli = parseCliOptions();
   const executionMode = cli.send ? "send" : cli.call ? (cli.demoDelivery ? "call-demo" : "call") : "dry-run";
   console.log(`Mode: source=${cli.live ? "live" : "fixture"}, execution=${executionMode}`);

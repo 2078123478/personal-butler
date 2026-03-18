@@ -1,6 +1,6 @@
-# Personal Butler Arbitrage Module — One Pager
+# Vigil Arbitrage Module — One Pager
 
-**The Arbitrage Module is the first flagship strategy module inside Personal Butler.**
+**The Arbitrage Module is the first flagship strategy module inside Vigil.**
 
 It is designed to turn **Binance ecosystem capabilities** into **risk-aware arbitrage decisions** for BNB ecosystem-native workflows.
 
@@ -56,7 +56,7 @@ It needs tools that can:
 - execute within constraints
 - explain outcomes clearly
 
-That is where Personal Butler fits.
+That is where Vigil fits.
 
 ---
 
@@ -96,9 +96,9 @@ The current working backend already provides:
 - state tracking
 - notification surfaces
 
-### 4. Personal Butler = product layer
+### 4. Vigil = product layer
 
-Personal Butler turns the whole thing into a product experience rather than a raw engine.
+Vigil turns the whole thing into a product experience rather than a raw engine.
 
 ---
 
@@ -230,4 +230,4 @@ This is a realistic path from current code to a stronger product story.
 
 ## One-sentence summary
 
-**The Personal Butler Arbitrage Module is a Binance Skills-compatible, BNB ecosystem-native strategy layer that transforms market context, risk context, and execution infrastructure into explainable, simulation-backed arbitrage decisions.**
+**The Vigil Arbitrage Module is a Binance Skills-compatible, BNB ecosystem-native strategy layer that transforms market context, risk context, and execution infrastructure into explainable, simulation-backed arbitrage decisions.**

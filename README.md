@@ -1,6 +1,6 @@
-# Personal Butler
+# Vigil
 
-Personal Butler is a skill-oriented autonomous agent framework for building private, wallet-native, chain-aware AI assistants with proactive sensing and contact judgment.
+Vigil is a skill-oriented autonomous agent framework for building private, wallet-native, chain-aware AI assistants with proactive sensing and contact judgment.
 
 It combines four layers in one project:
 
@@ -26,7 +26,7 @@ The goal is **not** to discard the existing work. The goal is to keep the full s
 - agent communication should be **verifiable, encrypted, and chain-aware**
 - useful agents need a **real execution layer**, not just chat
 
-That is the core idea behind **Personal Butler**.
+That is the core idea behind **Vigil**.
 
 ---
 
@@ -94,7 +94,7 @@ The living assistant uses an LLM to batch-review ecosystem signals like a real h
 
 ## Why it matters for BNB Chain
 
-The strategic direction of Personal Butler is to become a stronger fit for **BNB Chain agent infrastructure**:
+The strategic direction of Vigil is to become a stronger fit for **BNB Chain agent infrastructure**:
 
 - agents need portable identity, not platform-locked accounts
 - multi-agent coordination needs trust and explicit consent
@@ -209,10 +209,10 @@ Start here:
 - [Arbitrage Decision Reasons](docs/ARBITRAGE_DECISION_REASONS.md)
 - [Arbitrage Implementation Gap](docs/ARBITRAGE_IMPLEMENTATION_GAP.md)
 - [Arbitrage Demo Script](docs/ARBITRAGE_DEMO_SCRIPT.md)
-- [Personal Butler Agent-Comm One Pager](docs/AGENT_COMM_ONE_PAGER.md)
+- [Vigil Agent-Comm One Pager](docs/AGENT_COMM_ONE_PAGER.md)
 - [Agent-Comm V2 Design](docs/AGENT_COMM_V2_DESIGN.md)
 - [Production Deployment Guide](docs/AGENT_COMM_PRODUCTION_DEPLOYMENT.md)
-- [Personal Butler Operations Guide](docs/ALPHAOS_OPERATIONS.md)
+- [Vigil Operations Guide](docs/ALPHAOS_OPERATIONS.md)
 
 ---
 

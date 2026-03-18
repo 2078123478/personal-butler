@@ -2,7 +2,7 @@
 
 This document captures the **current product direction**:
 
-> Personal Butler should evolve into a **BNB ecosystem-native agent product** that is **compatible with Binance official open skills**, while keeping the current OnchainOS-based execution stack as the working backend.
+> Vigil should evolve into a **BNB ecosystem-native agent product** that is **compatible with Binance official open skills**, while keeping the current OnchainOS-based execution stack as the working backend.
 
 This is **not** a full rewrite plan.
 It is a framing and migration plan so future docs, modules, and demos all move in the same direction.
@@ -22,7 +22,7 @@ That repository matters because it provides an **ecosystem anchor**:
 - skill-oriented packaging that other agent systems can integrate with
 
 So our goal is not just to "reference Binance" in wording.
-Our goal is to make Personal Butler feel like:
+Our goal is to make Vigil feel like:
 
 - **built for the BNB ecosystem**
 - **compatible with Binance official skill conventions**
@@ -44,9 +44,9 @@ The official skills are the open, ecosystem-facing capability layer:
 
 This gives us a clean external anchor.
 
-### Personal Butler is the strategy and product layer
+### Vigil is the strategy and product layer
 
-Personal Butler should sit **above** the official skill layer and provide:
+Vigil should sit **above** the official skill layer and provide:
 
 - user-facing product experience
 - multi-step workflow orchestration
@@ -73,7 +73,7 @@ The preferred framing is:
 
 Purpose: align with the Binance open skill ecosystem.
 
-This layer should define how Personal Butler talks to ecosystem capabilities in a way that is easy to explain to judges, partners, and future contributors.
+This layer should define how Vigil talks to ecosystem capabilities in a way that is easy to explain to judges, partners, and future contributors.
 
 Typical capability groups:
 
@@ -150,7 +150,7 @@ Purpose: make the system feel like a product, not a bag of calls.
 
 This includes:
 
-- Personal Butler user experience
+- Vigil user experience
 - Judge as decision / evaluation / explanation layer
 - Agent-Comm as trust and coordination layer
 - long-term memory and operator preferences
@@ -226,7 +226,7 @@ The practical migration model is:
 | Layer | Role | What it should look like externally |
 |------|------|--------------------------------------|
 | Binance official skills | ecosystem capability surface | official / open / BN-compatible building blocks |
-| Personal Butler strategy modules | differentiated intelligence | arbitrage, risk, alpha capture, signal orchestration |
+| Vigil strategy modules | differentiated intelligence | arbitrage, risk, alpha capture, signal orchestration |
 | OnchainOS backend | execution substrate | current runtime / engine / execution backend |
 | Agent-Comm + Judge + UX | trust and product layer | product experience, explainability, multi-agent coordination |
 
@@ -237,7 +237,7 @@ Another useful way to think about it:
 | OnchainOS discovery / execution loop | backend execution engine |
 | Agent-Comm | trust and coordination layer |
 | Judge | decision and explanation layer |
-| Personal Butler | BN ecosystem-native product shell |
+| Vigil | BN ecosystem-native product shell |
 | New arbitrage module | Binance Skills-compatible flagship strategy module |
 
 ---
@@ -295,7 +295,7 @@ Future doc changes should gradually reflect this structure.
 
 - BNB ecosystem-native positioning
 - compatibility with Binance official open skills
-- Personal Butler as product layer
+- Vigil as product layer
 - OnchainOS as current backend
 
 ### Strategy docs should emphasize
@@ -342,4 +342,4 @@ Future doc changes should gradually reflect this structure.
 
 ## 9. One-sentence summary
 
-**Binance official skills should become our ecosystem-facing capability standard; Personal Butler should become the product and strategy layer built on top of that standard; OnchainOS should remain the current execution backend underneath.**
+**Binance official skills should become our ecosystem-facing capability standard; Vigil should become the product and strategy layer built on top of that standard; OnchainOS should remain the current execution backend underneath.**

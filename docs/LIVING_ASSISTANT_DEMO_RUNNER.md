@@ -1,6 +1,6 @@
 # Living Assistant Demo Runner
 
-Run these commands to see Personal Butler sense, judge, and contact like a real assistant.
+Run these commands to see Vigil sense, judge, and contact like a real assistant.
 
 For CLI phone-call rehearsal and live call delivery flow, use:
 - [Living Assistant Call Demo Runbook](LIVING_ASSISTANT_CALL_DEMO_RUNBOOK.md)
