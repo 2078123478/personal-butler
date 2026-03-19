@@ -85,7 +85,7 @@ agent-comm:send <command> <peerId|contact:contactId> [flags]
 
 # Supported commands:
 #   ping                    — liveness check
-#   probe_onchainos         — query peer's OnchainOS execution readiness
+#   probe_onchainos         — query peer's execution-backend readiness
 #   start_discovery         — request peer to run discovery session
 #   request_mode_change     — ask peer to switch paper/live mode
 ```

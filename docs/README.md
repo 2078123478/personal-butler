@@ -78,7 +78,7 @@ That means:
 
 - the **repository identity** is now Vigil
 - the **core protocol** is still Agent-Comm
-- parts of the execution/runtime layer still use historical names such as **AlphaOS** and **OnchainOS**
+- parts of the execution/runtime layer still use historical names such as **AlphaOS** and older execution-backend labels
 
 This is intentional for now. The project is preserving a working baseline first, then refactoring naming, defaults, and outward presentation in controlled steps.
 

@@ -162,7 +162,7 @@ Vigil contributes to that stack in a way that is:
 The repository is in a deliberate transition stage.
 
 Externally, the project is now positioned as **Vigil**.
-Internally, some modules and documents still carry historical names such as **AlphaOS** and **OnchainOS**.
+Internally, some modules and documents still carry historical names such as **AlphaOS** and older execution-backend labels.
 
 This is intentional.
 

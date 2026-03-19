@@ -74,7 +74,7 @@ Show the minimum needed to make the intelligence obvious.
 
 > We’re not building a generic bot or a raw trading API wrapper.
 > We’re building a Binance Skills-compatible strategy module for the BNB ecosystem.
-> The current backend is powered by our existing OnchainOS runtime, but the product layer is Vigil.
+> The current backend is powered by our existing execution runtime, while the product layer is Vigil.
 
 ### What to show
 
@@ -387,7 +387,7 @@ A:
 
 > It means we’re aligning with an official open ecosystem capability layer instead of building a closed one-off stack. That improves extensibility, explainability, and partner fit.
 
-### Q: Why keep OnchainOS underneath?
+### Q: Why keep the existing execution backend underneath?
 
 A:
 

@@ -1,11 +1,11 @@
 ---
 name: alphaos
-description: Plugin-based DEX arbitrage engine with scan/evaluate/simulate/execute/record/notify workflow, SQLite state tracking, AES-256 vault, and OnchainOS v6 execution. Use when implementing strategy plugins, risk gating, execution mode transitions (paper/live), cost modeling, growth telemetry, or operating the arbitrage runtime. For agent-to-agent communication see the agent-comm skill. For opportunity scanning see the discovery skill.
+description: Plugin-based DEX arbitrage engine with scan/evaluate/simulate/execute/record/notify workflow, SQLite state tracking, AES-256 vault, and current execution-backend integration. Use when implementing strategy plugins, risk gating, execution mode transitions (paper/live), cost modeling, growth telemetry, or operating the arbitrage runtime. For agent-to-agent communication see the agent-comm skill. For opportunity scanning see the discovery skill.
 ---
 
 # AlphaOS Skill
 
-Core arbitrage engine. Runs a tick loop that scans DEX quotes, evaluates spread opportunities through strategy plugins, simulates execution, and records results. Integrates with OnchainOS v6 for live execution.
+Core arbitrage engine. Runs a tick loop that scans DEX quotes, evaluates spread opportunities through strategy plugins, simulates execution, and records results. Integrates with the current execution backend for live execution.
 
 ## Related Skills
 
@@ -21,7 +21,7 @@ Core arbitrage engine. Runs a tick loop that scans DEX quotes, evaluates spread 
 - `src/skills/alphaos/runtime/` — supporting services:
   - `state-store.ts` — SQLite persistence (trades, opportunities, strategies, profiles, outbox)
   - `vault.ts` — AES-256-GCM + PBKDF2 secret storage
-  - `onchainos-client.ts` — OnchainOS v6 adapter (quote → swap → simulate → broadcast)
+  - `onchainos-client.ts` — execution-backend adapter (quote → swap → simulate → broadcast)
   - `risk-engine.ts` — risk policy enforcement
   - `simulator.ts` — pre-execution simulation
   - `cost-model.ts` — fee/slippage/MEV/gas cost estimation
@@ -41,7 +41,7 @@ scan → evaluate → plan → simulate → execute → record → notify
 2. **evaluate** — plugin applies strategy logic, accepts/rejects opportunity
 3. **plan** — plugin outputs execution plan with bounded notional
 4. **simulate** — simulator validates plan against risk policy
-5. **execute** — paper: record virtual trade / live: OnchainOS v6 broadcast
+5. **execute** — paper: record virtual trade / live: execution-backend broadcast
 6. **record** — persist trade + PnL to SQLite
 7. **notify** — fire OpenClaw webhook with trade summary
 
@@ -63,7 +63,7 @@ Plugins live in `src/skills/alphaos/plugins/`. Currently: `dex-arbitrage.ts`.
 | Mode | Behavior |
 |------|----------|
 | `paper` | Virtual execution, no on-chain tx, full PnL tracking |
-| `live` | Real OnchainOS v6 execution (quote → swap → simulate → broadcast) |
+| `live` | Real execution-backend flow (quote → swap → simulate → broadcast) |
 
 ### Live Gate (paper → live promotion)
 
@@ -73,13 +73,13 @@ Automatic promotion requires all conditions met in trailing 24h:
 - Permission failures = 0
 - Reject rate, latency, slippage within dynamic thresholds
 
-## OnchainOS v6 Integration
+## Execution Backend Integration
 
 Prefer official v6 flow: `quote → swap → simulate → broadcast → history`.
 
 - Controlled fallback on `404/405` only when compat mode enabled
 - If simulate/broadcast is permission-limited, degrade to `paper` + emit risk alert
-- Validate connectivity: `POST /api/v1/integration/onchainos/probe`
+- Validate connectivity: `POST /api/v1/integration/execution/probe` (legacy onchainos path still works)
 
 ## API Endpoints
 
@@ -110,9 +110,9 @@ GET  /api/v1/backtest/snapshot   — export historical data (JSON/CSV)
 POST /api/v1/replay/sandbox      — deterministic risk replay
 ```
 
-### OnchainOS Health
+### Execution Backend Health
 ```
-POST /api/v1/integration/onchainos/probe — v6 execution path health check
+POST /api/v1/integration/execution/probe — execution path health check
 ```
 
 ### Demo
@@ -146,13 +146,13 @@ OpenClaw webhook format:
 ```bash
 npm run demo:run              # full arbitrage cycle → demo-output/
 npm run demo:discovery        # discovery engine demo → demo-output/
-npm run demo:smoke:live       # OnchainOS v6 integration smoke test
+npm run demo:smoke:live       # execution-backend integration smoke test
 ```
 
 ## Extension Points
 
 - Add strategy plugins in `src/skills/alphaos/plugins/`
-- Add OnchainOS API adapters in `runtime/onchainos-client.ts`
+- Add execution-backend adapters in `runtime/onchainos-client.ts`
 - Add custom webhook mappers in `runtime/notifier.ts`
 - Extend cost model in `runtime/cost-model.ts`
 

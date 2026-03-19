@@ -14,7 +14,7 @@ In one line:
 
 - **BNB ecosystem-native direction:** the module is framed for the BNB / Binance ecosystem, not as a generic standalone trading bot.
 - **Binance Skills-compatible:** it is meant to build on official open skills for market context, balance readiness, token metadata, token risk, and optional signal enrichment.
-- **Execution-backed:** it keeps the current OnchainOS-based backend for real workflow execution.
+- **Execution-backed:** it keeps the current execution backend for real workflow execution.
 - **Decision-first:** the value is not just “can it trade?” but “should it act after costs, safety checks, and policy constraints?”
 
 ---
@@ -85,9 +85,9 @@ This is where high-value logic lives:
 - decision routing
 - summaries and reporting
 
-### 3. OnchainOS backend = execution layer
+### 3. Existing execution backend = execution layer
 
-The current working backend already provides:
+The current working execution backend already provides:
 
 - runtime orchestration
 - simulation
