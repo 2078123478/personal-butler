@@ -103,7 +103,7 @@ const defaultableConfigInputs = [
   },
   {
     key: "ONCHAINOS_AUTH_MODE",
-    label: "OnchainOS auth mode",
+    label: "Execution backend auth mode",
     source: "env",
     note: "Profiles can recommend the expected auth handshake without forcing credentials.",
   },
@@ -157,28 +157,28 @@ const autoDetectableConfigInputs = [
 const xlayerRequiredUserInputs = [
   {
     key: "ONCHAINOS_API_BASE",
-    label: "OnchainOS API base",
+    label: "Execution backend API base",
     source: "env",
     note: "Required to leave mock mode and hit the real integration endpoints.",
   },
   {
     key: "ONCHAINOS_API_KEY",
-    label: "OnchainOS API key",
+    label: "Execution backend API key",
     source: "env",
   },
   {
     key: "ONCHAINOS_API_SECRET",
-    label: "OnchainOS API secret",
+    label: "Execution backend API secret",
     source: "env",
   },
   {
     key: "ONCHAINOS_PASSPHRASE",
-    label: "OnchainOS passphrase",
+    label: "Execution backend passphrase",
     source: "env",
   },
   {
     key: "ONCHAINOS_PROJECT_ID",
-    label: "OnchainOS project id",
+    label: "Execution backend project id",
     source: "env",
   },
   {

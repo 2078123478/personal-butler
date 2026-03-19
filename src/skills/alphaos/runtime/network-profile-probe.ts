@@ -285,7 +285,7 @@ function buildOnchainStatusCheck(
       label: "Onchain integration status",
       required: false,
       status: "warn",
-      summary: "ONCHAINOS_API_BASE is not configured, so OnchainOS stays in mock mode",
+      summary: "ONCHAINOS_API_BASE is not configured, so the execution backend stays in mock mode",
       details: onchainStatus as unknown as Record<string, unknown>,
     };
   }

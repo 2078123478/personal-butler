@@ -97,7 +97,7 @@ curl http://localhost:3000/api/v1/growth/moments?limit=5
 curl http://localhost:3000/api/v1/growth/share/latest
 
 # Current execution backend integration health
-curl http://localhost:3000/api/v1/integration/onchainos/status
+curl http://localhost:3000/api/v1/integration/execution/status
 ```
 
 **SSE — Real-time Stream:**
@@ -250,7 +250,7 @@ npm run demo:discovery
 Verify the full v6 execution path is healthy:
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/integration/onchainos/probe \
+curl -X POST http://localhost:3000/api/v1/integration/execution/probe \
   -H 'Content-Type: application/json' \
   -d '{"pair":"ETH/USDC","chainIndex":"196","notionalUsd":25}'
 ```
@@ -285,4 +285,4 @@ No external database required. Data persists across restarts.
 | Today's metrics | `curl localhost:3000/api/v1/metrics/today` |
 | Export CSV | `curl localhost:3000/api/v1/backtest/snapshot?hours=24&format=csv` |
 | Battle report | `curl localhost:3000/api/v1/growth/share/latest` |
-| Probe execution backend | `curl -X POST localhost:3000/api/v1/integration/onchainos/probe -d '{"pair":"ETH/USDC","chainIndex":"196","notionalUsd":25}'` |
+| Probe execution backend | `curl -X POST localhost:3000/api/v1/integration/execution/probe -d '{"pair":"ETH/USDC","chainIndex":"196","notionalUsd":25}'` |

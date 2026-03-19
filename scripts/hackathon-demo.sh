@@ -52,7 +52,7 @@ echo "[5/7] capture metrics + share + strategy status + integration"
   request GET /api/v1/growth/moments?limit=5 || echo '{"error":"moments unavailable"}'
   echo ','
   echo '  "integration":'
-  request GET /api/v1/integration/onchainos/status || echo '{"error":"integration status unavailable"}'
+  request GET /api/v1/integration/execution/status || echo '{"error":"integration status unavailable"}'
   echo ','
   echo '  "replay":'
   request POST /api/v1/replay/sandbox "{\"seed\":\"$SEED\",\"hours\":24,\"mode\":\"paper\"}"

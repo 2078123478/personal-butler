@@ -1403,7 +1403,7 @@ function demoHtml(): string {
       <pre id="moments">No growth moments yet</pre>
     </div>
     <div class="card">
-      <h2>OnchainOS v6 Probe</h2>
+      <h2>Execution Backend Probe</h2>
       <pre id="probe">Probe pending...</pre>
     </div>
     <div class="card feed">
@@ -1486,8 +1486,8 @@ function demoHtml(): string {
       const requestedAt = new Date().toISOString();
       try {
         const [integrationResp, probeResp] = await Promise.all([
-          fetch("/api/v1/integration/onchainos/status"),
-          fetch("/api/v1/integration/onchainos/probe", {
+          fetch("/api/v1/integration/execution/status"),
+          fetch("/api/v1/integration/execution/probe", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ pair: "ETH/USDC", chainIndex: "196", notionalUsd: 25 }),
@@ -1887,7 +1887,7 @@ export function createServer(
     }
   });
 
-  app.get("/api/v1/integration/onchainos/status", requireApiAuth, (_req, res) => {
+  const handleIntegrationStatus: RequestHandler = (_req, res) => {
     if (!options?.onchainClient) {
       res.status(503).json({ error: "onchain client unavailable" });
       return;
@@ -1897,9 +1897,12 @@ export function createServer(
       ...options.onchainClient.getIntegrationStatus(),
       ...(networkProfile ? { networkProfile } : {}),
     });
-  });
+  };
 
-  app.post("/api/v1/integration/onchainos/probe", requireApiAuth, async (req, res) => {
+  app.get("/api/v1/integration/onchainos/status", requireApiAuth, handleIntegrationStatus);
+  app.get("/api/v1/integration/execution/status", requireApiAuth, handleIntegrationStatus);
+
+  const handleIntegrationProbe: RequestHandler = async (req, res) => {
     if (!options?.onchainClient) {
       res.status(503).json({ error: "onchain client unavailable" });
       return;
@@ -1919,16 +1922,22 @@ export function createServer(
       notionalUsd,
     });
     res.status(result.ok ? 200 : 503).json(result);
-  });
+  };
 
-  app.get("/api/v1/integration/onchainos/token-cache", requireApiAuth, (req, res) => {
+  app.post("/api/v1/integration/onchainos/probe", requireApiAuth, handleIntegrationProbe);
+  app.post("/api/v1/integration/execution/probe", requireApiAuth, handleIntegrationProbe);
+
+  const handleTokenCache: RequestHandler = (req, res) => {
     const symbol = typeof req.query.symbol === "string" ? req.query.symbol.trim().toUpperCase() : undefined;
     const chainIndex = typeof req.query.chainIndex === "string" ? req.query.chainIndex.trim() : undefined;
     const limit = toLimit(req.query.limit, 100);
     res.json({
       items: store.listTokenCache(limit, symbol, chainIndex),
     });
-  });
+  };
+
+  app.get("/api/v1/integration/onchainos/token-cache", requireApiAuth, handleTokenCache);
+  app.get("/api/v1/integration/execution/token-cache", requireApiAuth, handleTokenCache);
 
   app.get("/api/v1/stream/metrics", requireDemoAuthIfPrivate, (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
@@ -2686,7 +2695,7 @@ export function createServer(
     }
   });
 
-  app.post("/api/v1/agent-comm/send/probe-onchainos", async (req, res) => {
+  const handleProbeExecutionSend: RequestHandler = async (req, res) => {
     const deps = ensureAgentCommSendDeps(res);
     if (!deps) {
       return;
@@ -2703,7 +2712,10 @@ export function createServer(
     } catch (error) {
       handleAgentCommApiError(res, error);
     }
-  });
+  };
+
+  app.post("/api/v1/agent-comm/send/probe-onchainos", handleProbeExecutionSend);
+  app.post("/api/v1/agent-comm/send/probe-execution", handleProbeExecutionSend);
 
   app.post("/api/v1/agent-comm/send/start-discovery", async (req, res) => {
     const deps = ensureAgentCommSendDeps(res);

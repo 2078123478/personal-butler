@@ -139,7 +139,7 @@ This triggers an immediate OpenClaw heartbeat whenever an on-chain message arriv
 ### On Agent A
 
 ```bash
-cd /path/to/onchainos
+cd /path/to/personal-butler
 source .env.agent-comm-mainnet-a
 
 # Initialize wallet (generates LIW + ACW if not exists)
@@ -157,7 +157,7 @@ Save the output, you'll need:
 ### On Agent B
 
 ```bash
-cd /path/to/onchainos
+cd /path/to/personal-butler
 source .env.agent-comm-mainnet-b
 
 # Initialize wallet
@@ -284,7 +284,7 @@ Expected output:
 Check B's database:
 
 ```bash
-cd /path/to/onchainos
+cd /path/to/personal-butler
 node -e "
 const Database = require('better-sqlite3');
 const db = new Database('data/agent-comm-mainnet-b/alpha.db', { readonly: true });

@@ -3416,7 +3416,7 @@ export class StateStore {
     return {
       ...row,
       title: `AlphaOS 战报 ${row.pair} ${signed} USD`,
-      text: `【AlphaOS 战报】${row.strategyId} 在 ${row.mode} 模式完成 ${row.pair}，单笔 ${signed} USD。可信凭证 tx=${row.txHash} #OnchainOS #DEXArbitrage`,
+      text: `【AlphaOS 战报】${row.strategyId} 在 ${row.mode} 模式完成 ${row.pair}，单笔 ${signed} USD。可信凭证 tx=${row.txHash} #DEXArbitrage`,
     };
   }
 

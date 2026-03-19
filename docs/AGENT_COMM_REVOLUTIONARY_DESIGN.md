@@ -315,4 +315,4 @@ If you're building autonomous agents that need to coordinate without a central a
 **Protocol Version**: v2  
 **Status**: Production-ready  
 **License**: MIT (check repo for details)  
-**Maintained by**: OnchainOS team
+**Maintained by**: Vigil team

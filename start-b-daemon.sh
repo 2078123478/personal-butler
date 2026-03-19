@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 export NETWORK_PROFILE_ID=xlayer-recommended
-export DATA_DIR=/home/wilsen/apps/apps/onchainos/data/agent-comm-mainnet-b
+export DATA_DIR=/home/wilsen/apps/apps/personal-butler/data/agent-comm-mainnet-b
 export VAULT_MASTER_PASSWORD=SGR8DHzCrZivdh3zhDlCqSPBbxUiINPN
 export COMM_ENABLED=true
 export COMM_LISTENER_MODE=poll

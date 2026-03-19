@@ -393,9 +393,9 @@ describe("API server", () => {
     expect(demoPage.status).toBe(200);
     expect(demoPage.headers["content-type"]).toContain("text/html");
     expect(demoPage.text).toContain("official-status");
-    expect(demoPage.text).toContain("OnchainOS v6 Probe");
+    expect(demoPage.text).toContain("Execution Backend Probe");
     expect(demoPage.text).toContain("Growth Moments");
-    expect(demoPage.text).toContain("/api/v1/integration/onchainos/probe");
+    expect(demoPage.text).toContain("/api/v1/integration/execution/probe");
     expect(demoPage.text).toContain("可用");
     expect(demoPage.text).toContain("受限");
     expect(demoPage.text).toContain("降级");
@@ -466,7 +466,7 @@ describe("API server", () => {
     const integrationStatus = await invokeApi(
       app,
       "GET",
-      "/api/v1/integration/onchainos/status",
+      "/api/v1/integration/execution/status",
       undefined,
       { headers: authHeaders() },
     );
@@ -523,7 +523,7 @@ describe("API server", () => {
     const probe = await invokeApi(
       app,
       "POST",
-      "/api/v1/integration/onchainos/probe",
+      "/api/v1/integration/execution/probe",
       {
         pair: "ETH/USDC",
         chainIndex: "196",
@@ -538,7 +538,7 @@ describe("API server", () => {
     const tokenCache = await invokeApi(
       app,
       "GET",
-      "/api/v1/integration/onchainos/token-cache?symbol=ETH&chainIndex=196",
+      "/api/v1/integration/execution/token-cache?symbol=ETH&chainIndex=196",
       undefined,
       { headers: authHeaders() },
     );
