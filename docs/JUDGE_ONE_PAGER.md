@@ -2,13 +2,13 @@
 
 ## 0) 真正的差异化：主动生活助手
 
-在当前仓库里，Living Assistant 已经从蓝图变成可运行能力（Phase 1-6 全部落地）：
+在当前仓库里，Living Assistant 已经从蓝图变成可运行能力（Phase 1-6 代码与演示路径已落地）：
 
 1. 不是等用户问，而是主动感知 BNB 生态信号（Signal Radar），并统一归一化为 `NormalizedSignal`。
 2. 通过 6 级注意力阶梯决定是否打扰用户（`silent` → `call_escalation`），内置 quiet hours 降级、频率限制、watchlist 相关性判断。
-3. **LLM 驱动的信号审核**：80 条 Binance 公告 → LLM 批量审阅 → 8 条通知 / 12 条摘要 / 60 条跳过，噪音降低 87%。同类信号自动聚合（如 3 条 new_listing → 1 条摘要）。LLM 不可用时自动降级到规则引擎。
-4. **自然语言语音简报**：不再是模板拼接，而是 LLM 生成小音风格的口语化简报（≤3 句话，15 秒内），配合 CosyVoice 克隆音色合成。
-5. 端到端闭环已验证：信号感知 → LLM 审核 → 自然语言简报 → CosyVoice 克隆音色语音播报 → Telegram 投递（语音+交互按钮）→ 用户响应 → 回调处理 → 消息状态更新。
+3. **LLM 驱动的信号审核**：当前演示样例为 80 条 Binance 公告 → 8 条通知 / 12 条摘要 / 60 条跳过（约 87% 降噪）。同类信号自动聚合（如 3 条 new_listing → 1 条摘要）。LLM 不可用时自动降级到规则引擎。
+4. **自然语言语音简报**：核心路径不依赖模板拼接，由 LLM 生成口语化简报（目标约束：≤3 句话、15 秒内），配合 CosyVoice 克隆音色合成。
+5. 仓库内 demo/测试路径已覆盖端到端链路：信号感知 → LLM 审核 → 自然语言简报 → CosyVoice 克隆音色语音播报 → Telegram 投递（语音+交互按钮）→ 用户响应 → 回调处理 → 消息状态更新。
 6. API 路由已上线，可直接评测：
 
 ```text
@@ -16,6 +16,8 @@ POST /api/v1/living-assistant/evaluate
 GET  /api/v1/living-assistant/demo/:scenarioName
 GET  /api/v1/living-assistant/capsules
 ```
+
+口径说明：指标可信度与边界请对照 `docs/METRICS.md`、`docs/VALIDATION.md`，证据映射见 `docs/EVIDENCE.md`。
 
 ---
 
@@ -78,7 +80,7 @@ riskAdjustedNetEdgeBps >= minNetEdgeBps(mode)
 - 延迟惩罚
 - MEV 惩罚
 
-2. 准入层（Live Gate）
+2. 准入层（Live Gate，当前实现阈值）
 - 24h 模拟净收益 > 0
 - 24h 模拟胜率 >= 55%
 - 24h 权限失败 = 0
@@ -95,7 +97,7 @@ riskAdjustedNetEdgeBps >= minNetEdgeBps(mode)
 
 ## 5) 传播性设计：从技术结果到可验证表达
 
-我们不把传播理解为营销包装，而是**把真实执行证据产品化**：
+我们不把传播理解为营销包装，而是把执行证据尽量产品化表达（repo-validated/demo-backed）：
 
 1. 实时观测：
 - `/demo` + `/api/v1/stream/metrics` 展示机会、成交、PnL、模式、当前执行链路状态。
