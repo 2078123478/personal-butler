@@ -1,0 +1,53 @@
+Vigil — Living Assistant Demo
+Mode: source=fixture, execution=dry-run
+
+Scenario: binance-real-listing-kat
+Description: Real Binance announcement: Katana (KAT) new listing with Seed Tag. High-value signal for ecosystem participants.
+Signal: source=binance_announcement, type=new_listing, title=Binance Will List Katana (KAT) with Seed Tag Applied, urgency=critical
+Decision: attentionLevel=strong_interrupt, shouldContact=true, reason=Relevant critical signal triggered escalation., channels=telegram|voice|webhook
+Brief: Binance just announced it’s listing Katana (KAT) on March 18 at 12:00 UTC—five new spot pairs including KAT/USDT, with deposits already open and a Seed Tag applied due to higher volatility risk.  
+That Seed Tag means extra scrutiny—and potential delisting if KAT underperforms, so watch price action and volume closely post-launch.  
+Deposit KAT now if you’re planning to trade at launch, since withdrawals won’t open until the next day.
+Audio: not generated
+Timing: policy=0.3ms, brief=3353.9ms, tts=0.0ms, delivery=0.0ms, total=3354.3ms
+Loop status: demoMode=true, loopCompletedAt=2026-03-23T06:36:53.242Z
+
+Scenario: critical-risk-escalation
+Description: Critical risk signal should escalate to strong interruption or call escalation behavior.
+Signal: source=token_risk_change, type=risk_alert, title=Critical risk shift on watched token, urgency=critical
+Decision: attentionLevel=call_escalation, shouldContact=true, reason=Relevant critical signal triggered escalation., channels=telegram|voice|webhook|discord
+Brief: Boss—PEPE on BSC just got hit: owner called removeAllLimits() and yanked $2.8M in liquidity, dropping total locked funds from $4.2M to $1.4M in 3 minutes—ownership’s still intact and mint is unlimited.  
+This matches 94% of past rug pulls, and the honeypot risk score spiked from 12 to 89.  
+Immediate action: pull all PEPE/USDT positions *now*—no holds barred.
+Audio: not generated
+Timing: policy=0.0ms, brief=3141.5ms, tts=0.0ms, delivery=0.0ms, total=3141.6ms
+Loop status: demoMode=true, loopCompletedAt=2026-03-23T06:36:56.384Z
+
+Scenario: proactive-arbitrage-alert
+Description: High-confidence arbitrage path should generate an active brief and proactive outreach.
+Signal: source=market_opportunity, type=spread_detected, title=Arbitrage path detected for ETH/USDC, urgency=high
+Decision: attentionLevel=voice_brief, shouldContact=true, reason=Watchlist match and high urgency triggered voice brief., channels=telegram|voice
+Brief: Hey boss—arbitrage just opened up for ETH/USDC with a $14.20 expected net profit and 89% confidence. That’s a high-urgency, high-edge opportunity per our active strategy. Please approve execution right away—I’ll queue the trade.
+Audio: not generated
+Timing: policy=0.1ms, brief=2307.1ms, tts=0.0ms, delivery=0.0ms, total=2307.2ms
+Loop status: demoMode=true, loopCompletedAt=2026-03-23T06:36:58.691Z
+
+Scenario: quiet-hours-downgrade
+Description: Relevant signal during quiet hours should be downgraded to digest delivery.
+Signal: source=binance_announcement, type=new_listing, title=Listing update for ETH ecosystem pair, urgency=high
+Decision: attentionLevel=digest, shouldContact=false, reason=Watchlist match and high urgency triggered voice brief., channels=none
+Brief: not generated
+Audio: not generated
+Digest queue: enqueued signalId=scenario-quiet-hours-1, size=1, nextFlushAt=2026-03-23T07:36:58.692Z
+Timing: policy=0.0ms, brief=0.0ms, tts=0.0ms, delivery=0.0ms, total=0.2ms
+Loop status: demoMode=true, loopCompletedAt=2026-03-23T06:36:58.692Z
+
+Digest flush (end-of-run): digestId=digest-batch-1, signals=1, window=2026-03-23T06:36:58.692Z -> 2026-03-23T06:36:58.692Z
+Digest highlight: [high] Listing update for ETH ecosystem pair (ETH/USDC)
+Digest summary:
+1 signal(s) batched from 2026-03-23T06:36:58.692Z to 2026-03-23T06:36:58.692Z.
+Urgency mix: critical=0, high=1, medium=0, low=0.
+Highlights: [high] Listing update for ETH ecosystem pair (ETH/USDC)
+Action: review_in_digest.
+
+Summary: 4 loops run, 3 briefs generated, 0 audio files created, loopTotal=8803.4ms, digestQueued=1, digestFlushes=1, digestSignalsFlushed=1, digestPending=0

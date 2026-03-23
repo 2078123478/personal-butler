@@ -4,6 +4,7 @@ dist
 .env.*
 !.env.example
 data
-demo-output
+demo-output/*.mp3
+demo-output/*.wav
 coverage
 .DS_Store
