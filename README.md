@@ -19,7 +19,7 @@ npm run demo:judge
 
 `demo:judge` 提供一个快速检查主路径的入口：先跑稳定的本地验证路径（`demo:living-assistant`），再在服务可用时尝试 `demo:discovery`，并将输出写到 `demo-output/`。它是审阅捷径，不是产品边界。
 
-运行时说明：Vigil 深度依托 OpenClaw 作为 assistant runtime。多通道接入、会话编排、提醒投递与交互闭环由运行时承接；对终端用户而言，Telegram / 语音 / 电话就是实际入口。
+平台说明：Vigil 基于 OpenClaw 平台构建，复用平台的多通道接入与会话编排能力。对终端用户而言，Telegram / 语音 / 电话就是实际入口。
 
 ## Fastest Reading Path
 

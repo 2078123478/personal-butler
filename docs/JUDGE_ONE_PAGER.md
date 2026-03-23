@@ -19,7 +19,7 @@ GET  /api/v1/living-assistant/capsules
 
 官方 skill 覆盖与阶段详见 `docs/official-skills-manifest.json`。
 
-运行时说明：Vigil 深度依托 OpenClaw 作为 assistant runtime。多通道接入、会话编排、提醒投递与回调闭环由运行时承接；对终端用户而言，Telegram / 语音 / 电话就是实际入口。
+平台说明：Vigil 基于 OpenClaw 平台构建，复用平台的多通道接入、会话编排、提醒投递与回调处理能力。对终端用户而言，Telegram / 语音 / 电话就是实际入口。
 
 ---
 
