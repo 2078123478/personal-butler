@@ -350,19 +350,19 @@ The correct framing is:
 - paper-safe execution flow
 - contact decision logic
 
-### What is next / near-term
+### Extended capabilities
 
-- stronger voice brief generation
+- enhanced voice brief generation
 - explicit contact policy engine
 - digest vs interrupt routing
 
-### What is the advanced frontier
+### Advanced capabilities
 
 - telephony bridge
 - call-out workflow
 - speech loop for very high-priority escalation
 
-This keeps the project honest.
+This keeps the project grounded.
 
 ### Do not say
 

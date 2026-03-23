@@ -199,8 +199,7 @@ The current repository already has real building blocks:
 - paper/live execution modes
 - notification and reporting surfaces
 
-The near-term work is not to invent everything from scratch.
-It is to package the current capabilities into a clearer, ecosystem-aligned module.
+The focus is not to invent everything from scratch, but to package the current capabilities into a clearer, ecosystem-aligned module.
 
 ---
 

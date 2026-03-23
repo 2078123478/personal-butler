@@ -131,7 +131,7 @@ This layer ingests signals from official and ecosystem-facing sources such as:
 - `binance-web3/trading-signal`
 - `binance-web3/crypto-market-rank`
 - `binance-web3/meme-rush`
-- future ecosystem-specific feeds
+- ecosystem-specific feeds
 
 This radar should not forward raw data directly.
 It should produce normalized **events** such as:
@@ -520,9 +520,9 @@ The emotional takeaway should be:
 
 ---
 
-## 10. MVP to champion roadmap
+## 10. Implementation stages
 
-## Stage 1 — Landed (Living Assistant MVP + execution baseline)
+## Stage 1 — Core foundation (Living Assistant + execution baseline)
 
 - arbitrage contract
 - decision taxonomy
@@ -537,7 +537,7 @@ The emotional takeaway should be:
 - demo scenario fixtures (`proactive-arbitrage-alert`, `quiet-hours-downgrade`, `critical-risk-escalation`)
 - signal capsule fixtures for replayable demos
 
-## Stage 2 — Next upgrades (from MVP to production-readiness)
+## Stage 2 — Production enhancements
 
 - live API polling integration
   - Binance announcements
@@ -548,7 +548,7 @@ The emotional takeaway should be:
   - `query-address-info`
   - `trading-signal`
 
-## Stage 3 — Advanced frontier
+## Stage 3 — Advanced capabilities
 
 - telephony / SIP bridge
 - multi-user support

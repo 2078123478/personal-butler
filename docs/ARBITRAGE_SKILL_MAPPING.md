@@ -37,7 +37,7 @@ The table below shows where capabilities should come from.
 | Module stage | What happens | Binance official skill candidates | Current internal anchors |
 |-------------|--------------|-----------------------------------|--------------------------|
 | discover | detect raw opportunity candidates | `binance/spot`, `binance/alpha`, `binance-web3/crypto-market-rank`, `binance-web3/meme-rush`, `binance-web3/trading-signal` | discovery engine, `dex-arbitrage.ts` scan |
-| enrich | attach token, market, and risk context | `binance-web3/query-token-info`, `binance-web3/query-token-audit`, `binance-web3/query-address-info`, `binance/assets` | metadata in opportunity, state store, future enrichment adapter |
+| enrich | attach token, market, and risk context | `binance-web3/query-token-info`, `binance-web3/query-token-audit`, `binance-web3/query-address-info`, `binance/assets` | metadata in opportunity, state store, enrichment adapter |
 | validate | check thresholds and policy | `binance/assets`, `binance/spot`, optional audit / address signals | `dex-arbitrage.ts` evaluate, risk engine, cost model |
 | simulate | estimate post-cost viability | upstream market context from `binance/spot` / `binance/alpha` | simulator, cost model |
 | decide | produce paper / assisted-live / live decision | optional support from skill-derived context | evaluation + module adapter |
@@ -150,7 +150,7 @@ These capabilities matter after decision and execution.
 
 ### Internal counterpart
 
-- future enrichment adapter feeding candidate metadata and route hints
+- enrichment adapter feeding candidate metadata and route hints
 
 ---
 
@@ -176,7 +176,7 @@ These capabilities matter after decision and execution.
 ### Internal counterpart
 
 - balance inputs used in evaluate / plan contexts
-- future explicit readiness adapter
+- explicit readiness adapter
 
 ---
 
@@ -222,7 +222,7 @@ These capabilities matter after decision and execution.
 
 ### Internal counterpart
 
-- future risk enrichment adapter feeding reason codes like `audit_flagged`
+- risk enrichment adapter feeding reason codes like `audit_flagged`
 
 ---
 
@@ -267,7 +267,7 @@ These capabilities matter after decision and execution.
 
 ### Internal counterpart
 
-- future scoring boost / confidence adjustment layer
+- scoring boost / confidence adjustment layer
 
 ---
 
