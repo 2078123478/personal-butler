@@ -43,6 +43,57 @@ In practical operations, teams face three recurring issues:
 
 Vigil addresses this with a single loop: `sense -> judge -> brief/act`, plus paper-first execution and replayable outputs.
 
+## Technical Architecture
+
+```mermaid
+graph TB
+    subgraph Signal Layer
+        BA[Binance Announcements API]
+        BS[Binance Square API]
+        TI[Token Info / Audit<br/>binance-web3]
+    end
+
+    subgraph Judgment Layer
+        SR[Signal Radar<br/>NormalizedSignal]
+        LLM[LLM Triage<br/>~87% noise reduction]
+        CP[Contact Policy Engine<br/>6-level attention ladder]
+    end
+
+    subgraph Execution Layer
+        PE[Paper Engine<br/>cost model + risk gates]
+        RE[Risk Engine<br/>3-layer auto-degradation]
+        SIM[Simulator<br/>paper ↔ live switch]
+    end
+
+    subgraph Delivery Layer
+        TG[Telegram<br/>text + inline keyboard]
+        VC[CosyVoice TTS<br/>cloned voice ≤15s]
+        TW[Twilio<br/>call escalation]
+    end
+
+    subgraph Trust Layer
+        WI[Wallet Identity<br/>EIP-712 signed cards]
+        E2E[E2E Encryption<br/>ECDH + AES-256-GCM]
+        LC[Lifecycle<br/>discover → invite → trust → revoke]
+    end
+
+    BA --> SR
+    BS --> SR
+    TI --> SR
+    SR --> LLM
+    LLM --> CP
+    CP -->|silent / digest| DROP[Suppress or batch]
+    CP -->|text_nudge| TG
+    CP -->|voice_brief| VC
+    CP -->|call_escalation| TW
+    CP -->|execution trigger| PE
+    PE --> RE
+    RE --> SIM
+    TG -->|callback| LOOP[Feedback Loop]
+    WI -.->|identity| SR
+    E2E -.->|encryption| TG
+```
+
 ## 3) Three things to look at
 
 1. **Judgment loop quality (Living Assistant)**
